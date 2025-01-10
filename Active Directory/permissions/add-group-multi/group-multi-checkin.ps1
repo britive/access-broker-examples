@@ -4,9 +4,10 @@
 # Variables fulfilled by Britive cloud platform upon checkin
 $Email = $env:user
 $GroupName = $env:group
+$Prefix = $env:prefix
 
-# When Britive passes the user name in an email format Strip the username from the email address and append "-a"
-$Username = ($Email -split "@")[0] + "-a"
+# When Britive passes the user name in an email format Strip the username from the email address and append "Prefix"
+$Username = ($Email -split "@")[0] + $Prefix
 
 
 # Check if user exists
