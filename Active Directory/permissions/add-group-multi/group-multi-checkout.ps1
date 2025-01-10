@@ -4,10 +4,12 @@
 # Variables fulfilled by Britive cloud platform upon checkout
 
 $Email = $env:user
-$GroupName = $env:group     
+$GroupName = $env:group
+$Prefix = $env:prefix
 
-# Strip the username from the email address and append "-a"
-$Username = ($Email -split "@")[0] + "-a"
+
+# Strip the username from the email address and append "Prefix"
+$Username = ($Email -split "@")[0] + $Prefix
 
 # Check if user exists
 $User = Get-ADUser -Filter {SamAccountName -eq $Username} -ErrorAction SilentlyContinue
