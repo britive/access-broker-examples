@@ -1,5 +1,5 @@
 # Powershell script example to allow a user to request group memberships for their "-a" account
-# via the Britive on-premise broker for Acitve Directory(AD)
+# via the Britive on-premise broker for Active Directory(AD)
 
 # Variables fulfilled by Britive cloud platform upon checkin
 $Email = $env:user
