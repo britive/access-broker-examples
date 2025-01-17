@@ -1,5 +1,5 @@
 
-# Microsoft SQL Server Management Scripts
+# Microsoft SQL Server Management for DB Owner
 
 This permission dir provides Bash scripts to manage MS SQL identities, specifically for adding and removing a user with set permissions on the MS SQL Server.
 
