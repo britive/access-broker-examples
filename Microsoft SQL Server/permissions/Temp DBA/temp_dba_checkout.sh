@@ -37,10 +37,10 @@ ALTER ROLE db_owner ADD MEMBER [$NEW_USER];
 "
 
 # Execute the SQL commands in the master database to create the login
-sqlcmd -S $SERVER_NAME -d master -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_COMMANDS_MASTER"
+/opt/mssql-tools18/bin/sqlcmd -S $SERVER_NAME -d master -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_COMMANDS_MASTER"
 
 # Execute the SQL commands in the target database to create the user
-sqlcmd -S $SERVER_NAME -d $DATABASE_NAME -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_COMMANDS_DATABASE"
+/opt/mssql-tools18/bin/sqlcmd -S $SERVER_NAME -d $DATABASE_NAME -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_COMMANDS_DATABASE"
 
 # Output the connection string for the new user
 echo "Connection string for the new user:"

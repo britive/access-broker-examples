@@ -33,20 +33,20 @@ DROP LOGIN [$USER_TO_DELETE];
 SQL_FIND_SESSIONS="SELECT session_id FROM sys.dm_exec_sessions WHERE login_name = '$USER_TO_DELETE';"
 
 # Execute the SQL command to find session IDs and store them in a variable
-SESSION_IDS=$(sqlcmd -S $SERVER_NAME -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_FIND_SESSIONS" -h -1 -W | grep -E '^[0-9]+$')
+SESSION_IDS=$(/opt/mssql-tools18/bin/sqlcmd -S $SERVER_NAME -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_FIND_SESSIONS" -h -1 -W | grep -E '^[0-9]+$')
 
 # Step 2: Loop through each session ID and kill it
 for SESSION_ID in $SESSION_IDS; do
     echo "Killing session ID: $SESSION_ID"
     SQL_KILL_SESSION="KILL $SESSION_ID;"
-    sqlcmd -S $SERVER_NAME -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_KILL_SESSION"
+    /opt/mssql-tools18/bin/sqlcmd -S $SERVER_NAME -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_KILL_SESSION"
 done
 
 
 # Execute the SQL commands to drop the user from the target database
-sqlcmd -S $SERVER_NAME -d $DATABASE_NAME -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_COMMANDS_DATABASE"
+/opt/mssql-tools18/bin/sqlcmd -S $SERVER_NAME -d $DATABASE_NAME -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_COMMANDS_DATABASE"
 
 # Execute the SQL commands to drop the login from the master database
-sqlcmd -S $SERVER_NAME -d master -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_COMMANDS_MASTER"
+/opt/mssql-tools18/bin/sqlcmd -S $SERVER_NAME -d master -U $ADMIN_USER -P $ADMIN_PASSWORD -Q "$SQL_COMMANDS_MASTER"
 
 echo "User $USER_TO_DELETE and associated login have been deleted."
