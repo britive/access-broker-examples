@@ -1,4 +1,4 @@
-# OPA policies wih Britive broker
+# OPA policies with Britive broker
 
 ## Introduction
 
