@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Remove a local user from the Windows instance",
+  "parameters": {
+    "username": {
+      "type": "String",
+      "description": "Username to remove"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runPowerShellScript",
+      "name": "removeUser",
+      "inputs": {
+        "runCommand": [
+          "$username = \"{{username}}\"",
+          "",
+          "Write-Output \"Removing user: $username\"",
+          "",
+          "if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {",
+          "  Remove-LocalUser -Name $username",
+          "  Write-Output \"User $username removed.\"",
+          "} else {",
+          "  Write-Output \"User $username does not exist.\"",
+          "}"
+        ]
+      }
+    }
+  ]
+}
+
