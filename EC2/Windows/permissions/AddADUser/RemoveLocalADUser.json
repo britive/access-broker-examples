@@ -1,0 +1,45 @@
+{
+    "schemaVersion": "2.2",
+    "description": "Remove AD user from local Administrators group and log them out.",
+    "parameters": {
+      "username": {
+        "type": "String",
+        "description": "Active Directory username (e.g., DOMAIN\\jdoe)"
+      }
+    },
+    "mainSteps": [
+      {
+        "action": "aws:runPowerShellScript",
+        "name": "removeADUser",
+        "inputs": {
+          "runCommand": [
+            "Write-Output \"DEBUG: Username = ${{username}}\"",
+            "if (-not $username) { Write-Error 'Username must be provided'; exit 1 }",
+            "Try {",
+            "  Remove-LocalGroupMember -Group 'Administrators' -Member $username",
+            "  Write-Output \"User $username removed from Administrators group.\"",
+            "} Catch {",
+            "  Write-Error $_.Exception.Message",
+            "  exit 1",
+            "}"
+          ]
+        }
+      },
+      {
+        "action": "aws:runPowerShellScript",
+        "name": "logOffUser",
+        "inputs": {
+          "runCommand": [
+            "$sessions = quser | Select-String $username",
+            "foreach ($session in $sessions) {",
+            "  $parts = $session -split '\\s+'",
+            "  $sessionId = $parts[2]",
+            "  logoff $sessionId /server:localhost",
+            "  Write-Output \"Logged off session ID: $sessionId\"",
+            "}"
+          ]
+        }
+      }
+    ]
+  }
+  
