@@ -13,15 +13,10 @@
         "name": "addADUserToAdmins",
         "inputs": {
           "runCommand": [
-            "Write-Output \"DEBUG: Username = ${{username}}\"",
-            "if (-not $username) { Write-Error 'Username must be provided'; exit 1 }",
-            "Try {",
-            "  Add-LocalGroupMember -Group 'Administrators' -Member $username",
-            "  Write-Output \"User $username added to Administrators group.\"",
-            "} Catch {",
-            "  Write-Error $_.Exception.Message",
-            "  exit 1",
-            "}"
+            "$username = \"{{ username }}\"",
+            "Write-Output \"DEBUG: Username = [$username]\"",
+            "if ([string]::IsNullOrWhiteSpace($username)) { Write-Error 'Username must be provided'; exit 1 }",
+            "Add-LocalGroupMember -Group 'Administrators' -Member $username"
           ]
         }
       }
