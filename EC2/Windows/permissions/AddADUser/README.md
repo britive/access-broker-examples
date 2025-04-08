@@ -1,6 +1,3 @@
----
-
-```markdown
 # Active Directory Just-in-Time Access for Windows Servers via AWS SSM
 
 This project provides a secure, auditable, and automated way to grant **just-in-time (JIT)** administrative access to Windows servers for **Active Directory users** using **AWS Systems Manager (SSM)**. It replaces the need to manage local accounts by temporarily adding AD users to the `Administrators` group and removing them after use.
@@ -75,4 +72,3 @@ aws ssm create-document \
 
 This project builds on AWS Systems Manager, AD group policies, and best practices for ephemeral access management.
 
----
