@@ -107,5 +107,3 @@ aws ssm send-command \
 6. **No External Exposure**: Ensure no inbound RDP ports are open. Use Session Manager port forwarding if RDP is necessary.
 
 ---
-
-Would you like a Markdown version of this README or want it bundled as a GitHub repository template?
