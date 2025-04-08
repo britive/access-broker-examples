@@ -1,0 +1,30 @@
+{
+    "schemaVersion": "2.2",
+    "description": "Add AD user to local Administrators group for JIT access.",
+    "parameters": {
+      "username": {
+        "type": "String",
+        "description": "Active Directory username (e.g., DOMAIN\\jdoe)"
+      }
+    },
+    "mainSteps": [
+      {
+        "action": "aws:runPowerShellScript",
+        "name": "addADUserToAdmins",
+        "inputs": {
+          "runCommand": [
+            "Write-Output \"DEBUG: Username = ${{username}}\"",
+            "if (-not $username) { Write-Error 'Username must be provided'; exit 1 }",
+            "Try {",
+            "  Add-LocalGroupMember -Group 'Administrators' -Member $username",
+            "  Write-Output \"User $username added to Administrators group.\"",
+            "} Catch {",
+            "  Write-Error $_.Exception.Message",
+            "  exit 1",
+            "}"
+          ]
+        }
+      }
+    ]
+  }
+  
