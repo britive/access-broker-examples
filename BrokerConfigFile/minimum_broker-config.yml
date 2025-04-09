@@ -1,0 +1,4 @@
+config:
+  bootstrap:
+    tenant_subdomain: abc
+    authentication_token: 5DnJ9wmyiv

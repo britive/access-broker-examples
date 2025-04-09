@@ -1,0 +1,5 @@
+# Uncomment and modify as needed
+config:
+  bootstrap:
+    tenant_subdomain: ${britive.broker.tenant.subdomain}  # required
+    authentication_token_generator: ${britive.broker.authentication.token.script}  # authentication_token_generator is required when using external vault to fetch token at runtime. Use in production system.

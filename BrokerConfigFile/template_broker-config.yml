@@ -1,0 +1,27 @@
+# Uncomment and modify as needed
+config:
+#  cache_path: ${britive.broker.action.command.cache} # default to ./cache if not provided
+#  bootstrap:
+#    execution_environment: /bin/sh -c "sudo -E <BRITIVE_BOOTSTRAP_SCRIPT>" # optional
+#    scripts_path: ${britive.broker.scripts.path}  # default to ./bootstrap if not provided
+#    tenant_subdomain: ${britive.broker.tenant.subdomain}  # required
+#    authentication_token_generator: ${britive.broker.authentication.token.script}  # one of authentication_token or authentication_token_generator is required
+#    authentication_token: ${britive.broker.authentication.token}  # one of authentication_token or authentication_token_generator is required
+#    broker_name_generator: ${britive.broker.name.script} # optional, defaults to running command hostname
+#    resources_generator: ${britive.broker.resources.script} # optional
+#  http_proxy:  # optional, if not specified do not use http proxy for connecting
+#    host: localhost      # required
+#    port: 8080           # required
+#    username: userA      # optional: if this or password not specified authorization type is None
+#    password: passwordA  # optional: if this or username not specified authorization type is None
+#    connection_type: [Legacy | Forwarding | Tunneling]   # optional defaults to Tunneling if not specified
+
+# The resource types supported by this broker
+resource_types:
+#  ssh:
+#    new_key:
+#      execution_environment: /bin/sh -c "sudo -E <BRITIVE_PERMISSION_SCRIPT>" # optional
+#      max_supported_version: local | any | <version#> # required
+#      checkout_script: ${ssh.new.key.checkout.script}  # required if max_supported_version is 'local'
+#      checkin_script: ${ssh.new.key.checkin.script} # required if max_supported_version is 'local'
+#      file_extension: ps1 | bat | sh | etc...   #optional  only used to append to filename of the remote scripts downloaded from Britive platform
