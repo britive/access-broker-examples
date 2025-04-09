@@ -5,10 +5,11 @@ This PowerShell script allows you to manage user membership in FreeIPA groups us
 ## Features
 
 - Connects to FreeIPA using provided credentials.
-- Checks if the target user and group exist.
+- The script expect the user and group information from the checkout/in request.
+- Checks if the target user and group exist. before processing the action.
+- The action is passed as an attribute to the string from the Britive Profile. Allowing us to use single script for both checkout and checkin.
 - Adds or removes the user from the specified group.
-- Uses try/catch blocks for robust error handling.
-- Exits with appropriate codes and error messages.
+- Uses try/catch blocks for robust error handling. Exits with appropriate codes and error messages.
 
 ## Requirements
 
@@ -19,28 +20,16 @@ This PowerShell script allows you to manage user membership in FreeIPA groups us
 
 First, clone or install the [Manage-FreeIPA](https://github.com/MS-LUF/Manage-FreeIPA) module and make sure it's available in your `$env:PSModulePath`.
 
-## Usage
-
-```powershell
-.\Manage-FreeIPAGroup.ps1 `
-    -Server "ipa.example.com" `
-    -Username "admin" `
-    -Password "YourSecretPassword" `
-    -TargetUser "jdoe" `
-    -TargetGroup "developers" `
-    -Action Add
-```
-
 ### Parameters
 
-| Name         | Type     | Description                                            |
-|--------------|----------|--------------------------------------------------------|
-| `Server`     | `string` | The FreeIPA server hostname or IP address.            |
-| `Username`   | `string` | Admin username for FreeIPA authentication.            |
-| `Password`   | `string` | Admin password.                                        |
-| `TargetUser` | `string` | The user to add/remove from the group.                |
-| `TargetGroup`| `string` | The group to manage membership in.                    |
-| `Action`     | `string` | Either `Add` or `Remove`.                             |
+| Name         | Type     | Description                                             | Source                    |
+|--------------|----------|---------------------------------------------------------| ---------------------     |
+| `Server`     | `string` | The FreeIPA server hostname or IP address.              | Local or Resource config  |
+| `Username`   | `string` | Admin username for FreeIPA authentication.              | Local or Resource config  |
+| `Password`   | `string` | Admin password.                                         | Local or vault            |
+| `User`       | `string` | The user to add/remove from the group.                  | Profile - Dynamic         |
+| `Group`      | `string` | The group to manage membership in.                      | Profile - Dynamic         |
+| `Action`     | `string` | Either `Checkout` or `Checkin`.                         | Profile - Dynamic         |
 
 ## Exit Codes
 
@@ -52,21 +41,6 @@ First, clone or install the [Manage-FreeIPA](https://github.com/MS-LUF/Manage-Fr
 | 3    | Group not found                         |
 | 4    | Failed to add/remove user from group    |
 
-## Examples
-
-### Add user `jdoe` to group `developers`
-
-```powershell
-.\Manage-FreeIPAGroup.ps1 -Server ipa.example.com -Username admin -Password 'secret' `
-    -TargetUser jdoe -TargetGroup developers -Action Add
-```
-
-### Remove user `jdoe` from group `developers`
-
-```powershell
-.\Manage-FreeIPAGroup.ps1 -Server ipa.example.com -Username admin -Password 'secret' `
-    -TargetUser jdoe -TargetGroup developers -Action Remove
-```
 
 ## Notes
 
