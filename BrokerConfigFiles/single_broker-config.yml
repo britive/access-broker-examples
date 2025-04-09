@@ -1,0 +1,15 @@
+# Broker Config example with single resource type.
+config:
+  bootstrap:
+    tenant_subdomain: ABC
+    authentication_token: t*************k
+
+# The resources supported by this broker
+resource_types:
+  WindowsEC2:
+    AddAdmin:
+      max_supported_version: local
+      checkout_script: /opt/britive-broker/scripts/ec2-windows-admin.sh
+      checkin_script: /opt/britive-broker/scripts/ec2-windows-admin.sh
+    AddADUser:
+      max_supported_version: latest
