@@ -1,4 +1,5 @@
-# Uncomment and modify as needed
+# Uncomment and modify as needed.
+# Note the indentation and the use of '#' to comment out lines.
 config:
 #  cache_path: ${britive.broker.action.command.cache} # default to ./cache if not provided
 #  bootstrap:
