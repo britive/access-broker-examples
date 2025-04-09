@@ -1,7 +1,6 @@
-
 ---
 
-## 📘 Project Summary
+# 📘 Project Summary
 
 This project provides a secure, auditable, and automated method to manage local administrative access on EC2 Windows instances using AWS Systems Manager (SSM). It includes:
 
