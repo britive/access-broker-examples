@@ -1,0 +1,16 @@
+# rename the file to broker-config.yml before usage or if you already have broker-config, add only the VyOS Router related config/code.
+# rename the folder name and structure to match your environment
+config:
+  bootstrap:
+    #    change the following to match your Britive tenant. For example https://netjoint.britive.com will become netjoints subdomain  
+    tenant_subdomain: netjoints
+    #    authentication token to connect to Britive Broker in the tenant mentioned above. This is a fake token.
+    authentication_token: n3Tj01nTSsh3zy22XDcK04R0zqKYhFbQP5insHahzAd
+    broker_name_generator: broker-name-generator.sh
+    # The resource types supported by this broker
+resource_types:
+  VyOS-Router-Resource-Type:
+    Rotate-Password-Permission:
+      max_supported_version: local
+      checkout_script: /Users/shahzadali/britive-broker-scripts/vyos_router_add_jit_user_checkout.sh
+      checkin_script: /Users/shahzadali/britive-broker-scripts/vyos_router_delete_jit_user_checkin.sh
