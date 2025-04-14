@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =================================================================
-# Just-In-Time (JIT) User Deletion from VyOS created by Shahzad Ali
+# Just-In-Time (JIT) User Deletion from VyOS
 # =================================================================
 
 # -----------------------
