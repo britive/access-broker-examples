@@ -1,5 +1,3 @@
----
-
 # 📘 Project Summary
 
 This project provides a secure, auditable, and automated method to manage local administrative access on EC2 Windows instances using AWS Systems Manager (SSM). It includes:
@@ -9,8 +7,6 @@ This project provides a secure, auditable, and automated method to manage local 
 - `ec2-windows-admin.sh`: A helper script to **interact with the SSM documents** using AWS CLI—supporting just-in-time access provisioning and cleanup.
 
 By leveraging SSM and role-based access through Britive, access is ephemeral, tightly controlled, and fully logged.
-
----
 
 ## 📄 README
 
@@ -22,7 +18,6 @@ By leveraging SSM and role-based access through Britive, access is ephemeral, ti
 | `RemoveLocalUser.json`      | SSM document to remove a local user from a Windows EC2 instance          |
 | `ec2-windows-admin.sh`      | Bash script to execute the above SSM documents using AWS CLI             |
 
----
 
 ### 🛠️ Prerequisites
 
@@ -36,7 +31,6 @@ By leveraging SSM and role-based access through Britive, access is ephemeral, ti
 - For just-in-time access: [Britive](https://docs.britive.com/docs/overview-accessbroker) for temporary credential injection
 - (Optional) [Slack chatbot](https://docs.britive.com/docs/configuring-slack-app) integration for interactive access requests
 
----
 
 ### 🚀 Usage
 
@@ -53,7 +47,7 @@ aws ssm send-command \
 
 > Automatically adds the user to the `Administrators` group.
 
----
+
 
 #### ❌ Remove Local User
 
@@ -68,7 +62,6 @@ aws ssm send-command \
 
 > Optionally extend to forcibly log out user before removal.
 
----
 
 ### 🧠 Enhancements
 
@@ -81,7 +74,6 @@ aws ssm send-command \
   logoff (query session | findstr "{{username}}" | foreach { ($_ -split '\s+')[2] })
   ```
 
----
 
 ## 🧰 Benefits of Using SSM Proxy
 
@@ -91,7 +83,6 @@ aws ssm send-command \
 - 🎯 **Granular control**: IAM and Britive manage who can run commands and when.
 - 🔄 **Automation ready**: Easily integrate into CI/CD, GitOps, or incident response pipelines.
 
----
 
 ## 🔐 Security Considerations
 
@@ -105,4 +96,3 @@ aws ssm send-command \
    - Use CloudTrail, CloudWatch Logs, and EventBridge for real-time monitoring and alerting.
 6. **No External Exposure**: Ensure no inbound RDP ports are open. Use Session Manager port forwarding if RDP is necessary.
 
----

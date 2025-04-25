@@ -37,7 +37,7 @@ aws ssm create-document \
 ## ✅ Benefits of Using SSM Proxy
 
 - **No RDP exposure:** No need to open port 3389 to the world.
-- **Credentialless access:** SSM operates using instance IAM roles, eliminating static credentials.
+- **Credential-less access:** SSM operates using instance IAM roles, eliminating static credentials.
 - **Auditability:** All command executions are logged in AWS CloudTrail and optionally in SSM Session Manager logs.
 - **Granular control:** Commands can be scoped per user, per group, or with approval flows using systems like Britive or Slack chatbots.
 - **Cross-platform support:** Works similarly across EC2, hybrid on-prem, and cloud-hosted Windows machines.
