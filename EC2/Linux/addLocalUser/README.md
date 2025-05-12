@@ -25,12 +25,12 @@ Shell script that:
 
 ### Permission Variables Required on Britive
 
-| Variable           | Purpose                             |
-|--------------------|--------------------------------------|
-| `BRITIVE_ACTION`   | `checkout` or `checkin`             |
-| `INSTANCE`         | EC2 Instance ID                     |
-| `BRITIVE_USER_EMAIL` | Email address of the accessing user |
-| `BRITIVE_SUDO`     | Set to `1` to enable sudo access    |
+| Variable              | Purpose                             |
+|-----------------------|-------------------------------------|
+| `BRITIVE_ACTION`      | `checkout` or `checkin`             |
+| `INSTANCE`            | EC2 Instance ID                     |
+| `BRITIVE_USER_EMAIL`  | Email address of the accessing user |
+| `BRITIVE_SUDO`        | Set to `1` to enable sudo access    |
 
 ### Create SSM Documents
 
