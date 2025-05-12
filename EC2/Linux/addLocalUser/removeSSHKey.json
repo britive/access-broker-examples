@@ -1,0 +1,32 @@
+{
+    "schemaVersion": "2.2",
+    "description": "Remove a local Linux user, their SSH keys, and sudo access",
+    "parameters": {
+      "username": {
+        "type": "String",
+        "description": "The username to delete"
+      }
+    },
+    "mainSteps": [
+      {
+        "action": "aws:runShellScript",
+        "name": "removeUser",
+        "inputs": {
+          "runCommand": [
+            "#!/bin/bash",
+            "set -e",
+            "user=\"{{ username }}\"",
+            "if id \"$user\" &>/dev/null; then",
+            "  echo \"Removing user: $user\"",
+            "  sudo pkill -u $user || true",
+            "  sudo userdel -r $user || true",
+            "  sudo rm -f /etc/sudoers.d/$user || true",
+            "  echo \"User $user removed.\"",
+            "else",
+            "  echo \"User $user does not exist. Skipping.\"",
+            "fi"
+          ]
+        }
+      }
+    ]
+  }

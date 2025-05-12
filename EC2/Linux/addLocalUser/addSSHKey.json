@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Add SSH public key for JIT access using Britive",
+  "parameters": {
+    "username": {
+      "type": "String",
+      "description": "The Linux username to configure"
+    },
+    "group": {
+      "type": "String",
+      "description": "The group the user belongs to"
+    },
+    "userEmail": {
+      "type": "String",
+      "description": "Email to use as SSH key comment"
+    },
+    "sudo": {
+      "type": "String",
+      "description": "Set to '0' to skip adding sudoers entry"
+    },
+    "sshPublicKey": {
+      "type": "String",
+      "description": "SSH public key to add to authorized_keys"
+}
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "addSSHKey",
+      "inputs": {
+        "runCommand": [
+          "#!/bin/bash",
+          "set -e",
+          "USER=\"{{ username }}\"",
+          "GROUP=\"{{ group }}\"",
+          "SUDO=\"{{ sudo }}\"",
+          "SSH_PATH=/${BRITIVE_HOME_ROOT:-\"home\"}/${USER}/.ssh",
+          "",
+          "finish () {",
+          "  exit $1",
+          "}",
+          "",
+          "if ! id -u $USER &>/dev/null; then",
+          "  useradd -m -s /bin/bash $USER || finish 1",
+          "fi",
+          "",
+          "mkdir -p $SSH_PATH || finish 1",
+          "chmod 700 $SSH_PATH || finish 1",
+          "chown $USER:$GROUP $SSH_PATH || finish 1",
+          "",
+          "echo \"{{ sshPublicKey }}\" > $SSH_PATH/authorized_keys || finish 1",
+          "chmod 600 $SSH_PATH/authorized_keys || finish 1",
+          "chown $USER:$GROUP $SSH_PATH/authorized_keys || finish 1",
+          "",
+          "if [ \"$SUDO\" != \"0\" ]; then",
+          "  echo \"$USER ALL=(ALL) NOPASSWD:ALL\" > /etc/sudoers.d/$USER || finish 1",
+          "  chmod 440 /etc/sudoers.d/$USER || finish 1",
+          "fi",
+          "",
+          "finish 0"
+        ]
+      }
+    }
+  ]
+}
