@@ -25,6 +25,6 @@ else
   aws ssm send-command \
   --document-name "removeSSHKey" \
   --targets "Key=InstanceIds,Values=$INSTANCE" \
-  --parameters "username=[\"$USERNAME\"],group=[\"$GROUP\"],userEmail=[\"$USER_EMAIL\"]" \
+  --parameters "username=[\"$USERNAME\"]" \
   --region "us-west-2"
 fi

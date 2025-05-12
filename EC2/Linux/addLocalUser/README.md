@@ -1,114 +1,90 @@
+# EC2 Just-In-Time SSH Access with SSM and Britive
 
----
+This project provides a lightweight mechanism for Just-In-Time (JIT) SSH access to EC2 instances using AWS SSM documents, triggered via a shell script integrated with Britive.
 
-## 🔐 Just-In-Time SSH Access for EC2 Linux Instances via AWS SSM
+## 📦 Components
 
-This solution provides two AWS SSM documents to enable **secure, on-demand SSH access** to Linux EC2 instances using a temporary user and injected SSH public key. It supports automation workflows including **Britive**, **Slack chatbot triggers**, and **scheduled cleanup**.
+### 1. `addSSHKey.json`
+SSM document that:
+- Creates a Linux user if not present.
+- Generates an SSH key pair (`britive-id_rsa`) on the target EC2.
+- Adds the public key to `authorized_keys`.
+- Optionally grants sudo access.
+- Outputs the private key for secure temporary access.
 
----
+### 2. `removeSSHKey.json`
+SSM document that:
+- Deletes a Linux user, their SSH keys, and sudoers entry if present.
 
-## 📄 Documents Overview
+### 3. `ec2-ssh-user.sh`
+Shell script that:
+- Reads user information and intent from environment variables (`BRITIVE_*`).
+- Uses `aws ssm send-command` to run either `addSSHKey` or `removeSSHKey` on the target EC2 instance.
+- Integrates with the Britive platform’s checkout/checkin workflows.
 
-### 1. `SsmSshKey`
-Creates a Linux user (if it doesn’t exist), injects the specified SSH public key, and grants **passwordless sudo access**.
+## 🚀 Usage
 
-### 2. `SsmRemoveSshKey`
-Deletes the previously created Linux user, their home directory, SSH keys, and any sudoers configuration.
+### Prermission Variables Required on Britive
 
----
+| Variable           | Purpose                             |
+|--------------------|--------------------------------------|
+| `BRITIVE_ACTION`   | `checkout` or `checkin`             |
+| `INSTANCE`         | EC2 Instance ID                     |
+| `BRITIVE_USER_EMAIL` | Email address of the accessing user |
+| `BRITIVE_SUDO`     | Set to `1` to enable sudo access    |
 
-## ⚙️ Usage
-
-### 📌 Prerequisites
-
-- Target EC2 Linux instances must have the **SSM agent installed and running**
-- IAM instance role must allow `ssm:SendCommand`
-- Your CLI user/role must be allowed to run SSM documents
-- SSH port (22) must be open to your bastion or through SSM port forwarding
-
----
-
-## 🛠️ Inject SSH Public Key (SSM-InjectSshKey)
-
-### 📝 Document Parameters:
-
-| Name         | Type   | Description                             |
-|--------------|--------|-----------------------------------------|
-| `username`   | String | Username to create or configure         |
-| `sshPublicKey` | String | SSH public key to inject into authorized_keys |
-
-### ✅ Example:
+### Create SSM Documents
 
 ```bash
-aws ssm send-command \
-  --document-name "SSM-InjectSshKey" \
-  --targets "Key=InstanceIds,Values=i-0123456789abcdef0" \
-  --parameters "username=[\"$USERNAME\"],group=[\"$GROUP\"],userEmail=[\"$USERNAME\"],sudo=[\"$SUDO\"]" \
+aws ssm create-document \
+  --name "addSSHKey" \
+  --document-type "Command" \
+  --document-format "JSON" \
+  --content file://addSSHKey.json \
+  --region us-west-2
+```
+
+```bash
+aws ssm create-document \
+  --name "removeSSHKey" \
+  --document-type "Command" \
+  --document-format "JSON" \
+  --content file://removeSSHKey.json \
   --region us-west-2
 
 ```
-
-This:
-- Adds `jituser` if not present
-- Injects the specified public key into `/home/jituser/.ssh/authorized_keys`
-- Grants passwordless sudo access to `jituser`
-
----
-
-## 🧹 Remove Linux User (SSM-RemoveLocalUser)
-
-### 📝 Document Parameters:
-
-| Name         | Type   | Description                  |
-|--------------|--------|------------------------------|
-| `username`   | String | Username to remove completely |
-
-### ✅ Example:
+Optionally make this document available across all account ids.
 
 ```bash
-aws ssm send-command \
-  --document-name "SSM-RemoveLocalUser" \
-  --targets "Key=InstanceIds,Values=i-0123456789abcdef0" \
-  --parameters '{
-    "username": ["jituser"]
-  }' \
-  --region us-east-1
+aws ssm modify-document-permission \
+  --name "addSSHKey" \
+  --permission-type Share \
+  --account-ids all \
+  --region us-west-2
 ```
 
-This:
-- Kills any running processes of the user
-- Deletes the user and their home directory
-- Removes `/etc/sudoers.d/<username>` entry
+
+### Expected Behavior
+- **checkout**: Adds the user and returns an SSH private key.
+- **checkin**: Removes the user and cleans up access.
+
+## ✅ Prerequisites
+
+- EC2 instance must have the **SSM agent running** and **IAM role allowing SSM access**.
+- Broker shell environment must be configured with AWS CLI.
+- Ensure IAM permissions to use `ssm:SendCommand`, `ssm:GetCommandInvocation`, etc.
+
+## 🔐 Security Notes
+
+- The private key is returned via SSM output. Handle with care.
+- Temporary access is revoked by deleting the user via `removeSSHKey`.
+
+## 📁 File Summary
+
+| File               | Purpose                        |
+|--------------------|--------------------------------|
+| `addSSHKey.json`   | Adds user + SSH key            |
+| `removeSSHKey.json`| Removes user + key             |
+| `ec2-ssh-user.sh`  | Executes SSM commands via CLI  |
 
 ---
-
-## ✅ Benefits
-
-- No permanent credentials on hosts
-- Just-in-time access with minimal blast radius
-- Easily triggered from CI/CD, Slack, or Britive
-- Works across multiple EC2s without direct SSH access
-
----
-
-## 💡 Example Use Case Flow
-
-1. **Britive** grants temporary IAM role access with `ssm:SendCommand` permission.
-2. **Slack chatbot** sends the public key and target instance ID to AWS.
-3. **SSM document** runs to create the user and inject the key.
-4. Access is granted for a limited time.
-5. **Cleanup script** (or scheduled EventBridge rule) runs `SSM-RemoveLocalUser`.
-
----
-
-
-
-
-  
-// This document is used to remove a local Linux user, their SSH keys, and sudo access.
-// It first checks if the user exists, and if so, it removes the user and their home directory.
-// It also removes any sudo access by deleting the corresponding file in /etc/sudoers.d.
-// The script uses the `pkill` command to terminate any processes owned by the user before deletion.
-// The `|| true` part ensures that the script continues even if the command fails, which is useful for optional cleanup tasks.
-// The script is designed to be run with elevated privileges, so it uses `sudo` for commands that require root access.
-// The `set -e` command ensures that the script exits immediately if any command fails, which is a good practice for scripts that modify system state.  
