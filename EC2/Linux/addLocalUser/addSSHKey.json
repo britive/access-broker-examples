@@ -1,0 +1,37 @@
+{
+    "schemaVersion": "2.2",
+    "description": "Add SSH public key for JIT access",
+    "parameters": {
+      "username": {
+        "type": "String",
+        "description": "The Linux username to configure"
+      },
+      "sshPublicKey": {
+        "type": "String",
+        "description": "The SSH public key to authorize"
+      }
+    },
+    "mainSteps": [
+      {
+        "action": "aws:runShellScript",
+        "name": "addSSHKey",
+        "inputs": {
+          "runCommand": [
+            "#!/bin/bash",
+            "set -e",
+            "echo 'Creating user if not exists: {{ username }}'",
+            "id -u {{ username }} &>/dev/null || sudo useradd -m -s /bin/bash {{ username }}",
+            "echo 'Ensuring ~/.ssh directory exists'",
+            "sudo mkdir -p /home/{{ username }}/.ssh",
+            "echo 'Writing public key'",
+            "echo '{{ sshPublicKey }}' | sudo tee /home/{{ username }}/.ssh/authorized_keys",
+            "sudo chown -R {{ username }}:{{ username }} /home/{{ username }}/.ssh",
+            "sudo chmod 700 /home/{{ username }}/.ssh",
+            "sudo chmod 600 /home/{{ username }}/.ssh/authorized_keys",
+            "echo '{{ username }} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/{{ username }}",
+            "sudo chmod 440 /etc/sudoers.d/{{ username }}"
+          ]
+        }
+      }
+    ]
+  }
