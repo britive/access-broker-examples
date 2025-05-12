@@ -43,11 +43,9 @@ Deletes the previously created Linux user, their home directory, SSH keys, and a
 aws ssm send-command \
   --document-name "SSM-InjectSshKey" \
   --targets "Key=InstanceIds,Values=i-0123456789abcdef0" \
-  --parameters '{
-    "username": ["jituser"],
-    "sshPublicKey": ["ssh-ed25519 AAAAC3NzaC1... user@example.com"]
-  }' \
-  --region us-east-1
+  --parameters "username=[\"$USERNAME\"],group=[\"$GROUP\"],userEmail=[\"$USERNAME\"],sudo=[\"$SUDO\"]" \
+  --region us-west-2
+
 ```
 
 This:

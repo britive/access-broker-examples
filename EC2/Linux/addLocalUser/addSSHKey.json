@@ -1,37 +1,72 @@
 {
-    "schemaVersion": "2.2",
-    "description": "Add SSH public key for JIT access",
-    "parameters": {
-      "username": {
-        "type": "String",
-        "description": "The Linux username to configure"
-      },
-      "sshPublicKey": {
-        "type": "String",
-        "description": "The SSH public key to authorize"
-      }
+  "schemaVersion": "2.2",
+  "description": "Add SSH public key for JIT access using Britive",
+  "parameters": {
+    "username": {
+      "type": "String",
+      "description": "The Linux username to configure"
     },
-    "mainSteps": [
-      {
-        "action": "aws:runShellScript",
-        "name": "addSSHKey",
-        "inputs": {
-          "runCommand": [
-            "#!/bin/bash",
-            "set -e",
-            "echo 'Creating user if not exists: {{ username }}'",
-            "id -u {{ username }} &>/dev/null || sudo useradd -m -s /bin/bash {{ username }}",
-            "echo 'Ensuring ~/.ssh directory exists'",
-            "sudo mkdir -p /home/{{ username }}/.ssh",
-            "echo 'Writing public key'",
-            "echo '{{ sshPublicKey }}' | sudo tee /home/{{ username }}/.ssh/authorized_keys",
-            "sudo chown -R {{ username }}:{{ username }} /home/{{ username }}/.ssh",
-            "sudo chmod 700 /home/{{ username }}/.ssh",
-            "sudo chmod 600 /home/{{ username }}/.ssh/authorized_keys",
-            "echo '{{ username }} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/{{ username }}",
-            "sudo chmod 440 /etc/sudoers.d/{{ username }}"
-          ]
-        }
+    "group": {
+      "type": "String",
+      "description": "The group the user belongs to"
+    },
+    "userEmail": {
+      "type": "String",
+      "description": "Email to use as SSH key comment"
+    },
+    "sudo": {
+      "type": "String",
+      "description": "Set to '0' to skip adding sudoers entry"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "addSSHKey",
+      "inputs": {
+        "runCommand": [
+          "#!/bin/bash",
+          "set -e",
+          "USER=\"{{ username }}\"",
+          "GROUP=\"{{ group }}\"",
+          "USER_EMAIL=\"{{ userEmail }}\"",
+          "SUDO=\"{{ sudo }}\"",
+          "SSH_PATH=/${BRITIVE_HOME_ROOT:-\"home\"}/${USER}/.ssh",
+          "",
+          "finish () {",
+          "  rm -f $SSH_PATH/britive-id_rsa*",
+          "  exit $1",
+          "}",
+          "",
+          "if ! id -u $USER &>/dev/null; then",
+          "  useradd -m -s /bin/bash $USER || finish 1",
+          "fi",
+          "",
+          "if [ ! -d $SSH_PATH ]; then",
+          "  mkdir -p $SSH_PATH || finish 1",
+          "  chmod 700 $SSH_PATH || finish 1",
+          "  chown $USER:$GROUP $SSH_PATH || finish 1",
+          "fi",
+          "",
+          "ssh-keygen -q -N '' -t rsa -C $USER_EMAIL -f $SSH_PATH/britive-id_rsa || finish 1",
+          "",
+          "mapfile -t contents < <(cat $SSH_PATH/authorized_keys 2>/dev/null | sort -u)",
+          "mapfile -t -O \"${#contents[@]}\" contents < <(cat $SSH_PATH/britive-id_rsa.pub 2>/dev/null)",
+          "printf \"%s\\n\" \"${contents[@]}\" > $SSH_PATH/authorized_keys",
+          "",
+          "chmod 600 $SSH_PATH/authorized_keys || finish 1",
+          "chown $USER:$GROUP $SSH_PATH/authorized_keys || finish 1",
+          "",
+          "if [ \"$SUDO\" != \"0\" ]; then",
+          "  echo \"$USER ALL=(ALL) NOPASSWD:ALL\" > /etc/sudoers.d/$USER || finish 1",
+          "  chmod 440 /etc/sudoers.d/$USER || finish 1",
+          "fi",
+          "",
+          "cat $SSH_PATH/britive-id_rsa || finish 1",
+          "",
+          "finish 0"
+        ]
       }
-    ]
-  }
+    }
+  ]
+}
