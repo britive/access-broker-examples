@@ -7,10 +7,8 @@ This project provides a lightweight mechanism for Just-In-Time (JIT) SSH access 
 ### 1. `addSSHKey.json`
 SSM document that:
 - Creates a Linux user if not present.
-- Generates an SSH key pair (`britive-id_rsa`) on the target EC2.
-- Adds the public key to `authorized_keys`.
+- Adds a provided public SSH key to `authorized_keys`.
 - Optionally grants sudo access.
-- Outputs the private key for secure temporary access.
 
 ### 2. `removeSSHKey.json`
 SSM document that:
@@ -18,13 +16,14 @@ SSM document that:
 
 ### 3. `ec2-ssh-user.sh`
 Shell script that:
-- Reads user information and intent from environment variables (`BRITIVE_*`).
-- Uses `aws ssm send-command` to run either `addSSHKey` or `removeSSHKey` on the target EC2 instance.
-- Integrates with the Britive platform’s checkout/checkin workflows.
+- Generates an SSH key pair locally.
+- Sends the public key to the EC2 instance via the `addSSHKey` SSM document.
+- If the operation is successful, prints the private key for the session.
+- Handles removal of user via `removeSSHKey`.
 
 ## 🚀 Usage
 
-### Prermission Variables Required on Britive
+### Permission Variables Required on Britive
 
 | Variable           | Purpose                             |
 |--------------------|--------------------------------------|
