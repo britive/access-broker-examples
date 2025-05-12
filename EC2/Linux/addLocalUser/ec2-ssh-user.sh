@@ -25,7 +25,7 @@ if [ "$ACTION" = "checkout" ]; then
   COMMAND_ID=$(aws ssm send-command \
     --document-name "addSSHKey" \
     --targets "Key=InstanceIds,Values=$INSTANCE" \
-    --parameters "username=[\"$USERNAME\"],group=[\"$GROUP\"],sshPublicKey=[\"$PUB_KEY\"],sudo=[\"$SUDO\"],userEmail=[\"$USER_EMAIL\"]" \
+    --parameters "username=[\"$USER\"],group=[\"$GROUP\"],sshPublicKey=[\"$PUB_KEY\"],sudo=[\"$SUDO\"],userEmail=[\"$USER_EMAIL\"]" \
     --region "us-west-2" \
     --query "Command.CommandId" \
     --output text)
@@ -63,6 +63,6 @@ else
   aws ssm send-command \
   --document-name "removeSSHKey" \
   --targets "Key=InstanceIds,Values=$INSTANCE" \
-  --parameters "username=[\"$USERNAME\"]" \
+  --parameters "username=[\"$USER\"]" \
   --region "us-west-2"
 fi
