@@ -14,7 +14,7 @@ USER=${USERNAME}
 GROUP=${USERNAME}  # Default behavior is set to use username as group name
 
 if [ "$ACTION" = "checkout" ]; then
-  echo "Generating SSH key pair for $USERNAME"
+  echo "Generating SSH key pair for $USERNAME for instance: $INSTANCE"
   KEY_DIR=$(mktemp -d)
   KEY_PATH="$KEY_DIR/britive-id_rsa"
 
@@ -25,7 +25,7 @@ if [ "$ACTION" = "checkout" ]; then
   COMMAND_ID=$(aws ssm send-command \
     --document-name "addSSHKey" \
     --targets "Key=InstanceIds,Values=$INSTANCE" \
-    --parameters "username=[\"$USERNAME\"],group=[\"$GROUP\"],sshPublicKey=[\"$PUB_KEY\"],sudo=[\"$SUDO\"]" \
+    --parameters "username=[\"$USERNAME\"],group=[\"$GROUP\"],sshPublicKey=[\"$PUB_KEY\"],sudo=[\"$SUDO\"],userEmail=[\"$USER_EMAIL\"]" \
     --region "us-west-2" \
     --query "Command.CommandId" \
     --output text)
@@ -56,9 +56,7 @@ if [ "$ACTION" = "checkout" ]; then
     fi
   done
 
-  echo "---- BEGIN PRIVATE KEY ----"
   cat "$KEY_PATH"
-  echo "---- END PRIVATE KEY ----"
   
 else
   echo "Removing user $USER from instance $INSTANCE"
