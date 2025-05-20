@@ -6,8 +6,9 @@ import sys
 import json
 import botocore.exceptions
 
-ec2 = boto3.client("ec2")
-ssm = boto3.client("ssm")
+ec2 = boto3.client("ec2", region_name="us-west-2")
+ssm = boto3.client("ssm", region_name="us-west-2")
+
 
 def get_instance_ids_by_tags(tag_filters):
     try:
@@ -30,6 +31,7 @@ def get_instance_ids_by_tags(tag_filters):
         print(f"[ERROR] Failed to retrieve instance IDs: {e}")
         sys.exit(1)
 
+
 def send_ssm_command(instance_ids, document_name, parameters, comment):
     try:
         targets = [{"Key": "InstanceIds", "Values": instance_ids}]
@@ -37,7 +39,7 @@ def send_ssm_command(instance_ids, document_name, parameters, comment):
             DocumentName=document_name,
             Targets=targets,
             Parameters=parameters,
-            Comment=comment
+            Comment=comment,
         )
         return response["Command"]["CommandId"]
     except botocore.exceptions.ClientError as e:
@@ -46,6 +48,7 @@ def send_ssm_command(instance_ids, document_name, parameters, comment):
     except botocore.exceptions.BotoCoreError as e:
         print(f"[ERROR] General Boto3 error: {e}")
         sys.exit(1)
+
 
 def main():
     raw_tags = os.getenv("JIT_TAGS")
@@ -78,7 +81,7 @@ def main():
                 instance_ids,
                 document_name="AddLocalAdminADUser",
                 parameters={"username": [user]},
-                comment=f"Granting Windows local admin access to {user}"
+                comment=f"Granting Windows local admin access to {user}",
             )
             print(f"✅ Windows access granted via SSM. Command ID: {command_id}")
 
@@ -87,7 +90,7 @@ def main():
                 instance_ids,
                 document_name="RemoveLocalADUser",
                 parameters={"username": [user]},
-                comment=f"Revoking temporary access for {user}"
+                comment=f"Revoking temporary access for {user}",
             )
             print(f"🧹 Windows access revoked via SSM. Command ID: {command_id}")
 
@@ -98,6 +101,7 @@ def main():
     except Exception as e:
         print(f"[ERROR] Unexpected error: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
