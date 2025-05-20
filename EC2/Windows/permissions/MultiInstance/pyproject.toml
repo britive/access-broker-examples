@@ -1,0 +1,10 @@
+[project]
+name = "multiinstance"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">3.11, <3.12"
+dependencies = [
+    "boto3>=1.38.19",
+    "ruff>=0.11.10",
+]
