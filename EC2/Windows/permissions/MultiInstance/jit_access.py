@@ -3,17 +3,21 @@
 import os
 import boto3
 import sys
+import json
 import botocore.exceptions
 
 ec2 = boto3.client("ec2")
 ssm = boto3.client("ssm")
 
-def get_instance_ids_by_tag_values(tag_key, tag_value_csv):
+def get_instance_ids_by_tags(tag_filters):
     try:
-        tag_values = [v.strip() for v in tag_value_csv.split(",") if v.strip()]
-        filters = [{"Name": f"tag:{tag_key}", "Values": tag_values}]
-        instance_ids = []
+        filters = []
+        for tag_key, tag_values in tag_filters.items():
+            if isinstance(tag_values, str):
+                tag_values = [v.strip() for v in tag_values.split(",") if v.strip()]
+            filters.append({"Name": f"tag:{tag_key}", "Values": tag_values})
 
+        instance_ids = []
         paginator = ec2.get_paginator("describe_instances")
         for page in paginator.paginate(Filters=filters):
             for reservation in page.get("Reservations", []):
@@ -26,73 +30,69 @@ def get_instance_ids_by_tag_values(tag_key, tag_value_csv):
         print(f"[ERROR] Failed to retrieve instance IDs: {e}")
         sys.exit(1)
 
-def revoke_temp_access(instance_ids, username):
-    if not instance_ids:
-        print("[ERROR] No matching instances found for revoke.")
-        sys.exit(1)
-
+def send_ssm_command(instance_ids, document_name, parameters, comment):
     try:
         targets = [{"Key": "InstanceIds", "Values": instance_ids}]
-
         response = ssm.send_command(
-            DocumentName="RemoveLocalADUser",
+            DocumentName=document_name,
             Targets=targets,
-            Parameters={
-                "username": [username]
-            },
-            Comment=f"Revoking temporary SSH access for {username}"
+            Parameters=parameters,
+            Comment=comment
         )
         return response["Command"]["CommandId"]
     except botocore.exceptions.ClientError as e:
-        print(f"[ERROR] Failed to send revoke SSM command: {e.response['Error']['Message']}")
+        print(f"[ERROR] Failed to send SSM command: {e.response['Error']['Message']}")
         sys.exit(1)
     except botocore.exceptions.BotoCoreError as e:
-        print(f"[ERROR] General Boto3 error during revoke: {e}")
-        sys.exit(1)
-
-def grant_windows_ad_admin(instance_ids, username):
-    if not instance_ids:
-        print("[ERROR] No matching Windows instances found.")
-        sys.exit(1)
-
-    try:
-        targets = [{"Key": "InstanceIds", "Values": instance_ids}]
-
-        response = ssm.send_command(
-            DocumentName="AddLocalAdminADUser",
-            Targets=targets,
-            Parameters={"username": [username]},
-            Comment=f"Granting Windows local admin access to {username}"
-        )
-        return response["Command"]["CommandId"]
-    except botocore.exceptions.ClientError as e:
-        print(f"[ERROR] Failed to send Windows SSM command: {e.response['Error']['Message']}")
-        sys.exit(1)
-    except botocore.exceptions.BotoCoreError as e:
-        print(f"[ERROR] General Boto3 error for Windows access: {e}")
+        print(f"[ERROR] General Boto3 error: {e}")
         sys.exit(1)
 
 def main():
-    tag_key = os.getenv("JIT_TAG_KEY")
-    tag_values = os.getenv("JIT_TAG_VALUES")
+    raw_tags = os.getenv("JIT_TAGS")
     user = os.getenv("USER")
-    mode = os.getenv("JIT_ACTION", "grant")  # grant, revoke, windows
+    mode = os.getenv("JIT_ACTION", "checkout")  # checkout or checkin
 
-    if not tag_key or not tag_values or not user:
-        print("[ERROR] Missing required environment variables: JIT_TAG_KEY, JIT_TAG_VALUES, JIT_USER_EMAIL")
+    if not raw_tags or not user:
+        print("[ERROR] Missing required environment variables: JIT_TAGS and USER")
         sys.exit(1)
 
     try:
-        instance_ids = get_instance_ids_by_tag_values(tag_key, tag_values)
+        try:
+            parsed_tags = json.loads(raw_tags)
+            tag_filters = {
+                k: [v.strip() for v in v.split(",")] if isinstance(v, str) else v
+                for k, v in parsed_tags.items()
+            }
+        except json.JSONDecodeError as e:
+            print(f"[ERROR] Failed to parse JIT_TAGS JSON: {e}")
+            sys.exit(1)
+
+        instance_ids = get_instance_ids_by_tags(tag_filters)
+
+        if not instance_ids:
+            print("[ERROR] No matching instances found.")
+            sys.exit(1)
 
         if mode == "checkout":
-            command_id = grant_windows_ad_admin(instance_ids, user)
+            command_id = send_ssm_command(
+                instance_ids,
+                document_name="AddLocalAdminADUser",
+                parameters={"username": [user]},
+                comment=f"Granting Windows local admin access to {user}"
+            )
             print(f"✅ Windows access granted via SSM. Command ID: {command_id}")
+
         elif mode == "checkin":
-            command_id = revoke_temp_access(instance_ids, user)
+            command_id = send_ssm_command(
+                instance_ids,
+                document_name="RemoveLocalADUser",
+                parameters={"username": [user]},
+                comment=f"Revoking temporary access for {user}"
+            )
             print(f"🧹 Windows access revoked via SSM. Command ID: {command_id}")
+
         else:
-            print(f"[ERROR] Unknown JIT_MODE '{mode}'. Use 'checkout' or 'checkin'.")
+            print(f"[ERROR] Unknown JIT_ACTION '{mode}'. Use 'checkout' or 'checkin'.")
             sys.exit(1)
 
     except Exception as e:
