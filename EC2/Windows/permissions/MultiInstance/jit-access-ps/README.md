@@ -30,7 +30,7 @@ This script grants or revokes temporary admin access to Windows EC2 instances us
 
 ```powershell
 $env:JIT_TAGS = '{"Environment":"Dev","App":"MyApp"}'
-$env:USER = "someuser"
+$env:USER = "ad\jdoe"
 $env:JIT_ACTION = "checkout"  # or "checkin"
 .\jit-access.ps1
 ```
