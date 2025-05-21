@@ -65,7 +65,7 @@ function Get-InstanceIdsByTags {
     }
 }
 
-function Send-SSMCommand {
+function Invoke-SSMCommand {
     param (
         [array]$InstanceIds,
         [string]$DocumentName,
@@ -75,22 +75,23 @@ function Send-SSMCommand {
 
     try {
         $command = Send-SSMCommand -DocumentName $DocumentName `
-            -Targets @{ Key = "InstanceIds"; Values = $InstanceIds } `
+            -InstanceIds $InstanceIds `
             -Parameters $Parameters `
             -Comment $Comment `
             -Region $Region `
             -ProfileName $ProfileName
-
-        return $command.Command.CommandId
+        
+        $cmdId = $command.CommandId
+        return $cmdId
     } catch {
         Write-Error "[ERROR] Failed to send SSM command: $_"
         exit 1
     }
 }
 
+
 function Main {
     $rawTags = $env:JIT_TAGS
-    Write-Output "[INFO] Raw Tags: $rawTags"
     $domain = $env:DOMAIN
     $user = Convert-Username -Username $env:USER -Domain $domain
     $mode = $env:JIT_ACTION
@@ -105,11 +106,6 @@ function Main {
         $tagFilters = Convert-JsonToEC2TagFilters -JsonString $rawTags
         $instances = Get-EC2Instance -Region $Region -Filter $tagFilters
 
-        Write-Output "[INFO] Parsed tags: $($tagFilters | ConvertTo-Json -Depth 5)"
-        Write-Output "[INFO] User: $user"
-        Write-Output "[INFO] Action: $mode"
-        Write-Output "[INFO] Region: $Region"
-
         # Extract running instance IDs
         $instanceIds = $instances.Instances | Where-Object { $_.State.Name -eq 'running' } | Select-Object -ExpandProperty InstanceId
 
@@ -119,17 +115,17 @@ function Main {
         }
 
         Write-Output "[INFO] Instance IDs: $($instanceIds -join ', ')"
-        
+
         switch ($mode) {
             "checkout" {
-                $cmdId = Send-SSMCommand -InstanceIds $instanceIds `
+                $cmdId = Invoke-SSMCommand -InstanceIds $instanceIds `
                     -DocumentName "AddLocalAdminADUser" `
                     -Parameters @{ username = @($user) } `
                     -Comment "Granting Windows local admin access to $user"
                 Write-Output "✅ Windows access granted via SSM. Command ID: $cmdId"
             }
             "checkin" {
-                $cmdId = Send-SSMCommand -InstanceIds $instanceIds `
+                $cmdId = Invoke-SSMCommand -InstanceIds $instanceIds `
                     -DocumentName "RemoveLocalADUser" `
                     -Parameters @{ username = @($user) } `
                     -Comment "Revoking temporary access for $user"
