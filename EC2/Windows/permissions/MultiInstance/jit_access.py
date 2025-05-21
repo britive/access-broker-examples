@@ -10,6 +10,14 @@ ec2 = boto3.client("ec2", region_name="us-west-2")
 ssm = boto3.client("ssm", region_name="us-west-2")
 
 
+def process_username(username, domain="AD\\"):
+    if isinstance(username, str) and "@" in username and "." in username.split("@")[-1]:
+        email_prefix = username.split("@")[0]
+        return domain + email_prefix
+    else:
+        return None  # Or keep the original value, depending on your use case
+
+
 def get_instance_ids_by_tags(tag_filters):
     try:
         filters = []
@@ -52,7 +60,8 @@ def send_ssm_command(instance_ids, document_name, parameters, comment):
 
 def main():
     raw_tags = os.getenv("JIT_TAGS")
-    user = os.getenv("USER")
+    domain = os.getenv("DOMAIN")
+    user = process_username(username=os.getenv("USER"), domain=domain)
     mode = os.getenv("JIT_ACTION", "checkout")  # checkout or checkin
 
     if not raw_tags or not user:
