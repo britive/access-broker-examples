@@ -1,61 +1,65 @@
-<#
-.SYNOPSIS
-    Just-In-Time access automation using AWS EC2 tags and SSM Documents.
-
-.DESCRIPTION
-    This script looks up EC2 instances based on tag filters and executes SSM documents
-    to either grant or revoke temporary local admin access on Windows instances.
-
-.PARAMETER Region
-    AWS region to operate in. Default is 'us-west-2'.
-
-.EXAMPLE
-    .\jit_access.ps1 -Region "us-west-2"
-#>
-
-param (
-    [string]$Region = $env:AWS_REGION
+param(
+    [string]$Region = "us-west-2",
+    [string]$ProfileName = $env:AWS_PROFILE
 )
 
-if (-not $Region) {
-    $Region = "us-west-2"
+Import-Module AWSPowerShell.NetCore -ErrorAction Stop
+
+function Convert-Username {
+    param(
+        [string]$Username,
+        [string]$Domain = "AD\"
+    )
+    if ($Username -match "@" -and $Username -match "\.") {
+        $emailPrefix = $Username.Split("@")[0]
+        return "$Domain$emailPrefix"
+    } else {
+        return $null
+    }
 }
+
+function Convert-JsonToEC2TagFilters {
+    param(
+        [Parameter(Mandatory)]
+        [string]$JsonString
+    )
+
+    $parsed = ConvertFrom-Json $JsonString
+    $filters = @()
+
+    foreach ($key in $parsed.PSObject.Properties.Name) {
+        $values = $parsed.$key
+        if ($values -is [string]) {
+            $values = $values -split "," | ForEach-Object { $_.Trim() }
+        }
+        $filters += @{ Name = "tag:$key"; Values = $values }
+    }
+
+    return $filters
+}
+
+
 function Get-InstanceIdsByTags {
     param (
         [hashtable]$TagFilters
     )
 
-    try {
-        $filters = @()
-        foreach ($tagKey in $TagFilters.Keys) {
-            $tagValues = $TagFilters[$tagKey]
-            if ($tagValues -is [string]) {
-                $tagValues = $tagValues -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-            }
-            $filters += @{
-                Name   = "tag:$tagKey"
-                Values = $tagValues
-            }
+    $filters = @()
+    foreach ($key in $TagFilters.Keys) {
+        $values = $TagFilters[$key]
+        if ($values -is [string]) {
+            $values = $values -split "," | ForEach-Object { $_.Trim() }
         }
-
-        $instanceIds = @()
-        $nextToken = $null
-
-        do {
-            $result = Get-EC2Instance -Region $Region -Filter $filters -NextToken $nextToken
-            foreach ($reservation in $result.Reservations) {
-                foreach ($instance in $reservation.Instances) {
-                    if ($instance.State.Name -eq "running") {
-                        $instanceIds += $instance.InstanceId
-                    }
-                }
-            }
-            $nextToken = $result.NextToken
-        } while ($nextToken)
-
-        return $instanceIds | Select-Object -Unique
+        $filters += @{ Name = "tag:$key"; Values = $values }
     }
-    catch {
+
+    try {
+        $response = Get-EC2Instance -Region $Region -ProfileName $ProfileName -Filter $filters
+        $instanceIds = $response.Reservations.Instances |
+            Where-Object { $_.State.Name -eq "running" } |
+            Select-Object -ExpandProperty InstanceId -Unique
+        return $instanceIds
+    } catch {
         Write-Error "[ERROR] Failed to retrieve instance IDs: $_"
         exit 1
     }
@@ -63,23 +67,22 @@ function Get-InstanceIdsByTags {
 
 function Send-SSMCommand {
     param (
-        [string[]]$InstanceIds,
+        [array]$InstanceIds,
         [string]$DocumentName,
         [hashtable]$Parameters,
         [string]$Comment
     )
 
     try {
-        $response = Send-SSMCommand `
-            -DocumentName $DocumentName `
-            -InstanceId $InstanceIds `
-            -Parameter $Parameters `
+        $command = Send-SSMCommand -DocumentName $DocumentName `
+            -Targets @{ Key = "InstanceIds"; Values = $InstanceIds } `
+            -Parameters $Parameters `
             -Comment $Comment `
-            -Region $Region
+            -Region $Region `
+            -ProfileName $ProfileName
 
-        return $response.Command.CommandId
-    }
-    catch {
+        return $command.Command.CommandId
+    } catch {
         Write-Error "[ERROR] Failed to send SSM command: $_"
         exit 1
     }
@@ -87,7 +90,9 @@ function Send-SSMCommand {
 
 function Main {
     $rawTags = $env:JIT_TAGS
-    $user = $env:USER
+    Write-Output "[INFO] Raw Tags: $rawTags"
+    $domain = $env:DOMAIN
+    $user = Convert-Username -Username $env:USER -Domain $domain
     $mode = $env:JIT_ACTION
     if (-not $mode) { $mode = "checkout" }
 
@@ -97,39 +102,49 @@ function Main {
     }
 
     try {
-        $tagFilters = $null
-        try {
-            $tagFilters = ConvertFrom-Json $rawTags
-        }
-        catch {
-            Write-Error "[ERROR] Failed to parse JIT_TAGS JSON: $_"
-            exit 1
-        }
+        $tagFilters = Convert-JsonToEC2TagFilters -JsonString $rawTags
+        $instances = Get-EC2Instance -Region $Region -Filter $tagFilters
 
-        $instanceIds = Get-InstanceIdsByTags -TagFilters $tagFilters
+        Write-Output "[INFO] Parsed tags: $($tagFilters | ConvertTo-Json -Depth 5)"
+        Write-Output "[INFO] User: $user"
+        Write-Output "[INFO] Action: $mode"
+        Write-Output "[INFO] Region: $Region"
 
-        if (-not $instanceIds) {
+        # Extract running instance IDs
+        $instanceIds = $instances.Instances | Where-Object { $_.State.Name -eq 'running' } | Select-Object -ExpandProperty InstanceId
+
+        if (-not $instanceIds -or $instanceIds.Count -eq 0) {
             Write-Error "[ERROR] No matching instances found."
             exit 1
         }
 
-        if ($mode -eq "checkout") {
-            $commandId = Send-SSMCommand -InstanceIds $instanceIds -DocumentName "AddLocalAdminADUser" -Parameters @{ "username" = @($user) } -Comment "Granting Windows local admin access to $user"
-            Write-Host "✅ Windows access granted via SSM. Command ID: $commandId"
+        Write-Output "[INFO] Instance IDs: $($instanceIds -join ', ')"
+        
+        switch ($mode) {
+            "checkout" {
+                $cmdId = Send-SSMCommand -InstanceIds $instanceIds `
+                    -DocumentName "AddLocalAdminADUser" `
+                    -Parameters @{ username = @($user) } `
+                    -Comment "Granting Windows local admin access to $user"
+                Write-Output "✅ Windows access granted via SSM. Command ID: $cmdId"
+            }
+            "checkin" {
+                $cmdId = Send-SSMCommand -InstanceIds $instanceIds `
+                    -DocumentName "RemoveLocalADUser" `
+                    -Parameters @{ username = @($user) } `
+                    -Comment "Revoking temporary access for $user"
+                Write-Output "🧹 Windows access revoked via SSM. Command ID: $cmdId"
+            }
+            Default {
+                Write-Error "[ERROR] Unknown JIT_ACTION '$mode'. Use 'checkout' or 'checkin'."
+                exit 1
+            }
         }
-        elseif ($mode -eq "checkin") {
-            $commandId = Send-SSMCommand -InstanceIds $instanceIds -DocumentName "RemoveLocalADUser" -Parameters @{ "username" = @($user) } -Comment "Revoking temporary access for $user"
-            Write-Host "🧹 Windows access revoked via SSM. Command ID: $commandId"
-        }
-        else {
-            Write-Error "[ERROR] Unknown JIT_ACTION '$mode'. Use 'checkout' or 'checkin'."
-            exit 1
-        }
-    }
-    catch {
+    } catch {
         Write-Error "[ERROR] Unexpected error: $_"
         exit 1
     }
 }
 
 Main
+# End of script
