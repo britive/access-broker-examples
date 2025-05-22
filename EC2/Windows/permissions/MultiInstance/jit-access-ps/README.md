@@ -76,11 +76,6 @@ PowerShell repository settings are stored in files like:
 - `USER` – Username to grant/revoke access for
 - `JIT_ACTION` – `checkout` or `checkin` (defaults to `checkout`)
 
-## 🚀 Usage
-
-```powershell
-$env:JIT_TAGS = '{"Environment":"Dev","App":"MyApp"}'
-```
 
 ## 📝 Notes
 
