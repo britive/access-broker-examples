@@ -3,7 +3,6 @@ param(
     [string]$ProfileName = $env:AWS_PROFILE
 )
 
-Import-Module AWSPowerShell.NetCore -ErrorAction Stop
 
 function Convert-Username {
     param(
@@ -122,14 +121,14 @@ function Main {
                     -DocumentName "AddLocalAdminADUser" `
                     -Parameters @{ username = @($user) } `
                     -Comment "Granting Windows local admin access to $user"
-                Write-Output "✅ Windows access granted via SSM. Command ID: $cmdId"
+                Write-Output "Windows access granted via SSM. Command ID: $cmdId"
             }
             "checkin" {
                 $cmdId = Invoke-SSMCommand -InstanceIds $instanceIds `
                     -DocumentName "RemoveLocalADUser" `
                     -Parameters @{ username = @($user) } `
                     -Comment "Revoking temporary access for $user"
-                Write-Output "🧹 Windows access revoked via SSM. Command ID: $cmdId"
+                Write-Output "Windows access revoked via SSM. Command ID: $cmdId"
             }
             Default {
                 Write-Error "[ERROR] Unknown JIT_ACTION '$mode'. Use 'checkout' or 'checkin'."

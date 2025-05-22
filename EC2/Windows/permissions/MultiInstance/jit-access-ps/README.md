@@ -21,11 +21,17 @@ Register-PSRepository -Default
 Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
 
 # Add required AWS Modules
-Install-Module -Name AWSPowerShell.NetCore -Scope AllUsers -Force
-
-# Install AWS Modules
+Install-Module AWS.Tools.EC2
+Install-Module AWS.Tools.SimpleSystemsManagement
 
 ```
+
+Add these modules in the Broker User's Profile
+```powershell
+Import-Module AWS.Tools.EC2 -ErrorAction Stop
+Import-Module AWS.Tools.SimpleSystemsManagement -ErrorAction Stop
+```
+
 
 This registers the PSGallery repository using the default settings and marks it as **Trusted**.
 
