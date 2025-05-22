@@ -113,7 +113,7 @@ function Main {
             Write-Error "[ERROR] No matching instances found."
             exit 1
         }
-
+        Write-Output "[INFO] Username: $user"
         Write-Output "[INFO] Instance IDs: $($instanceIds -join ', ')"
 
         switch ($mode) {
