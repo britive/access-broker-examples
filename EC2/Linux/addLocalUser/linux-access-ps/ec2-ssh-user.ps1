@@ -12,15 +12,11 @@ $User = $Username
 $Group = $Username
 
 if ($Action -eq "checkout") {
-    Write-Host "Generating SSH key pair for $Username for instance: $Instance"
-
     $KeyDir = New-TemporaryFile | Split-Path
     $KeyPath = Join-Path $KeyDir "britive-id_rsa"
     & ssh-keygen -q -N "" -t rsa -f $KeyPath
 
     $PubKey = Get-Content "$KeyPath.pub" -Raw
-
-    Write-Host "Sending public key to EC2 via SSM"
 
     # Parameters as hashtable
     $ParamHash = @{
@@ -51,8 +47,6 @@ if ($Action -eq "checkout") {
         Write-Error "Failed to send command"
         exit 1
     }
-
-    Write-Host "Waiting for SSM command ($CommandId) to complete..."
 
     while ($true) {
         $Status = aws ssm list-command-invocations `
