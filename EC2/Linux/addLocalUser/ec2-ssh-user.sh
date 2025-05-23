@@ -14,14 +14,12 @@ USER=${USERNAME}
 GROUP=${USERNAME}  # Default behavior is set to use username as group name
 
 if [ "$ACTION" = "checkout" ]; then
-  echo "Generating SSH key pair for $USERNAME for instance: $INSTANCE"
   KEY_DIR=$(mktemp -d)
   KEY_PATH="$KEY_DIR/britive-id_rsa"
 
   ssh-keygen -q -N "" -t rsa -f "$KEY_PATH"
   PUB_KEY=$(cat "$KEY_PATH.pub")
 
-  echo "Sending public key to EC2 via SSM"
   COMMAND_ID=$(aws ssm send-command \
     --document-name "addSSHKey" \
     --targets "Key=InstanceIds,Values=$INSTANCE" \
@@ -35,8 +33,6 @@ if [ "$ACTION" = "checkout" ]; then
     exit 1
   fi
 
-  echo "Waiting for SSM command ($COMMAND_ID) to complete..."
-
   while true; do
     STATUS=$(aws ssm list-command-invocations \
       --command-id "$COMMAND_ID" \
@@ -45,8 +41,7 @@ if [ "$ACTION" = "checkout" ]; then
       --query "CommandInvocations[0].Status" \
       --output text)
 
-    if [[ "$STATUS" == "Success" ]]; then
-      echo "Command completed successfully."
+    if [[ "$STATUS" == "Success" ]]; then   
       break
     elif [[ "$STATUS" == "Failed" || "$STATUS" == "Cancelled" || "$STATUS" == "TimedOut" ]]; then
       echo "Command failed with status: $STATUS"
