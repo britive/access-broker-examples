@@ -5,12 +5,16 @@ This project provides a secure, auditable, and automated way to grant **just-in-
 ## 📂 Components
 
 ### 1. `AddLocalAdminADUser.json`
+
 An SSM document that:
+
 - Accepts a domain username as input
 - Adds the user to the `Administrators` group on the target Windows EC2 instance
 
 ### 2. `RemoveLocalADUser.json`
+
 An SSM document that:
+
 - Accepts the domain username
 - Removes the user from the `Administrators` group
 - Optionally logs them out if a session is active
@@ -33,7 +37,6 @@ aws ssm create-document \
   --content file://RemoveLocalADUser.json
 ```
 
-
 ## ✅ Benefits of Using SSM Proxy
 
 - **No RDP exposure:** No need to open port 3389 to the world.
@@ -41,7 +44,6 @@ aws ssm create-document \
 - **Auditability:** All command executions are logged in AWS CloudTrail and optionally in SSM Session Manager logs.
 - **Granular control:** Commands can be scoped per user, per group, or with approval flows using systems like Britive or Slack chatbots.
 - **Cross-platform support:** Works similarly across EC2, hybrid on-prem, and cloud-hosted Windows machines.
-
 
 ## 🔐 Security Considerations
 
@@ -51,14 +53,12 @@ aws ssm create-document \
 - **Cleanup Enforcement:** Always pair access grants with scheduled removal via automation or user-driven triggers.
 - **Domain Trust:** Ensure the instance and user are joined to the same AD domain or trust.
 
-
 ## 🧠 Extensibility Ideas
 
 - Slack chatbot integration for on-demand RDP access
 - Scheduled cleanup via Lambda or Step Functions
 - Role-based dashboards with audit history
 - Multi-user access controls per project or app team
-
 
 ## 🛠 Prerequisites
 
@@ -67,8 +67,6 @@ aws ssm create-document \
 - AWS CLI and access credentials
 - Optional: Britive or your JIT access broker
 
-
 ## 🙌 Acknowledgements
 
 This project builds on AWS Systems Manager, AD group policies, and best practices for ephemeral access management.
-
