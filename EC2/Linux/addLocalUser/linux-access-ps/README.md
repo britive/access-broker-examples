@@ -121,8 +121,8 @@ Removes the temporary user from the instance via `removeSSHKey` SSM document.
 
 ## 📌 Notes
 
-* This script is designed to be used in secure automation pipelines or called by a privileged automation platform (e.g., Britive).
-* Ensure the EC2 instance has outbound internet access or a VPC endpoint to connect to SSM.
+- This script is designed to be used in secure automation pipelines or called by a privileged automation platform (e.g., Britive).
+- Ensure the EC2 instance has outbound internet access or a VPC endpoint to connect to SSM.
 
 ---
 
