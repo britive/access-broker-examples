@@ -12,7 +12,7 @@ $scriptBlock = {
         Add-LocalGroupMember -Group "Administrators" -Member $RemoteUser -ErrorAction Stop
         Write-Output "User $RemoteUser added to Administrators group"
     } catch {
-        Write-Error "Failed to add user $RemoteUser: $_"
+        Write-Error "Failed to add user ${RemoteUser}: $($_.Exception.Message)"
     }
 }
 

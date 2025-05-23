@@ -1,8 +1,8 @@
 param(
     [string]$Region = $env:REGION,
-    [string]$ProfileName = $env:AWS_PROFILE
+    [string]$ProfileName = $env:AWS_PROFILE,
+    [string]$TargetRoleArn = $env:ASSUME_ROLE_ARN
 )
-
 
 function Convert-Username {
     param(
@@ -37,10 +37,42 @@ function Convert-JsonToEC2TagFilters {
     return $filters
 }
 
+function ConvertTo-SecureStringObject {
+    param (
+        [string]$AccessKeyId,
+        [string]$SecretAccessKey,
+        [string]$SessionToken
+    )
+
+    return [PSCustomObject]@{
+        AccessKeyId     = $AccessKeyId
+        SecretAccessKey = ($SecretAccessKey | ConvertTo-SecureString -AsPlainText -Force)
+        SessionToken    = ($SessionToken | ConvertTo-SecureString -AsPlainText -Force)
+    }
+}
+
+function Set-CrossAccountRole {
+    param (
+        [string]$RoleArn,
+        [string]$SessionName = "JITSession"
+    )
+
+    try {
+        $creds = Use-STSRole -RoleArn $RoleArn -RoleSessionName $SessionName -Region $Region -ProfileName $ProfileName
+        return ConvertTo-SecureStringObject `
+            -AccessKeyId $creds.Credentials.AccessKeyId `
+            -SecretAccessKey $creds.Credentials.SecretAccessKey `
+            -SessionToken $creds.Credentials.SessionToken
+    } catch {
+        Write-Error "[ERROR] Failed to assume role: $_"
+        exit 1
+    }
+}
 
 function Get-InstanceIdsByTags {
     param (
-        [hashtable]$TagFilters
+        [hashtable]$TagFilters,
+        [object]$AssumedCreds
     )
 
     $filters = @()
@@ -53,10 +85,17 @@ function Get-InstanceIdsByTags {
     }
 
     try {
-        $response = Get-EC2Instance -Region $Region -ProfileName $ProfileName -Filter $filters
+        $response = Get-EC2Instance `
+            -Region $Region `
+            -AccessKey $AssumedCreds.AccessKeyId `
+            -SecretKey ([Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SecretAccessKey))) `
+            -SessionToken ([Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SessionToken))) `
+            -Filter $filters
+
         $instanceIds = $response.Reservations.Instances |
             Where-Object { $_.State.Name -eq "running" } |
             Select-Object -ExpandProperty InstanceId -Unique
+
         return $instanceIds
     } catch {
         Write-Error "[ERROR] Failed to retrieve instance IDs: $_"
@@ -69,7 +108,8 @@ function Invoke-SSMCommand {
         [array]$InstanceIds,
         [string]$DocumentName,
         [hashtable]$Parameters,
-        [string]$Comment
+        [string]$Comment,
+        [object]$AssumedCreds
     )
 
     try {
@@ -78,16 +118,16 @@ function Invoke-SSMCommand {
             -Parameters $Parameters `
             -Comment $Comment `
             -Region $Region `
-            -ProfileName $ProfileName
-        
-        $cmdId = $command.CommandId
-        return $cmdId
+            -AccessKey $AssumedCreds.AccessKeyId `
+            -SecretKey ([Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SecretAccessKey))) `
+            -SessionToken ([Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SessionToken)))
+
+        return $command.CommandId
     } catch {
         Write-Error "[ERROR] Failed to send SSM command: $_"
         exit 1
     }
 }
-
 
 function Main {
     $rawTags = $env:JIT_TAGS
@@ -101,17 +141,18 @@ function Main {
         exit 1
     }
 
+    Write-Output "[INFO] Assuming role: $TargetRoleArn"
+    $assumedCreds = Set-CrossAccountRole -RoleArn $TargetRoleArn
+
     try {
         $tagFilters = Convert-JsonToEC2TagFilters -JsonString $rawTags
-        $instances = Get-EC2Instance -Region $Region -Filter $tagFilters
-
-        # Extract running instance IDs
-        $instanceIds = $instances.Instances | Where-Object { $_.State.Name -eq 'running' } | Select-Object -ExpandProperty InstanceId
+        $instanceIds = Get-InstanceIdsByTags -TagFilters $tagFilters -AssumedCreds $assumedCreds
 
         if (-not $instanceIds -or $instanceIds.Count -eq 0) {
             Write-Error "[ERROR] No matching instances found."
             exit 1
         }
+
         Write-Output "[INFO] Username: $user"
         Write-Output "[INFO] Instance IDs: $($instanceIds -join ', ')"
 
@@ -120,15 +161,17 @@ function Main {
                 $cmdId = Invoke-SSMCommand -InstanceIds $instanceIds `
                     -DocumentName "AddLocalAdminADUser" `
                     -Parameters @{ username = @($user) } `
-                    -Comment "Granting Windows local admin access to $user"
-                Write-Output "Windows access granted via SSM. Command ID: $cmdId"
+                    -Comment "Granting Windows local admin access to $user" `
+                    -AssumedCreds $assumedCreds
+                Write-Output "✅ Windows access granted via SSM. Command ID: $cmdId"
             }
             "checkin" {
                 $cmdId = Invoke-SSMCommand -InstanceIds $instanceIds `
                     -DocumentName "RemoveLocalADUser" `
                     -Parameters @{ username = @($user) } `
-                    -Comment "Revoking temporary access for $user"
-                Write-Output "Windows access revoked via SSM. Command ID: $cmdId"
+                    -Comment "Revoking temporary access for $user" `
+                    -AssumedCreds $assumedCreds
+                Write-Output "🧹 Windows access revoked via SSM. Command ID: $cmdId"
             }
             Default {
                 Write-Error "[ERROR] Unknown JIT_ACTION '$mode'. Use 'checkout' or 'checkin'."

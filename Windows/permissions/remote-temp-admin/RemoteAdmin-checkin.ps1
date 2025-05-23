@@ -11,7 +11,7 @@ $scriptBlock = {
         Remove-LocalGroupMember -Group "Administrators" -Member $RemoteUser -ErrorAction Stop
         Write-Output "User $RemoteUser removed from Administrators group"
     } catch {
-        Write-Error "Failed to remove user $RemoteUser: $_"
+        Write-Error "Failed to add user ${RemoteUser}: $($_.Exception.Message)"
     }
 }
 
