@@ -1,32 +1,55 @@
 {
-    "schemaVersion": "2.2",
-    "description": "Remove a local Linux user, their SSH keys, and sudo access",
-    "parameters": {
-      "username": {
-        "type": "String",
-        "description": "The username to delete"
-      }
+  "schemaVersion": "2.2",
+  "description": "Remove a local Linux user, or just their SSH keys and sudo access",
+  "parameters": {
+    "username": {
+      "type": "String",
+      "description": "The username to delete or modify"
     },
-    "mainSteps": [
-      {
-        "action": "aws:runShellScript",
-        "name": "removeUser",
-        "inputs": {
-          "runCommand": [
-            "#!/bin/bash",
-            "set -e",
-            "user=\"{{ username }}\"",
-            "if id \"$user\" &>/dev/null; then",
-            "  echo \"Removing user: $user\"",
-            "  sudo pkill -u $user || true",
-            "  sudo userdel -r $user || true",
-            "  sudo rm -f /etc/sudoers.d/$user || true",
-            "  echo \"User $user removed.\"",
-            "else",
-            "  echo \"User $user does not exist. Skipping.\"",
-            "fi"
-          ]
-        }
+    "removeOnlySSH": {
+      "type": "String",
+      "description": "Set to '1' to remove only SSH access and sudo (not delete the user)",
+      "default": "0"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "removeUserOrSSH",
+      "inputs": {
+        "runCommand": [
+          "#!/bin/bash",
+          "set -e",
+          "USER=\"{{ username }}\"",
+          "REMOVE_ONLY_SSH=\"{{ removeOnlySSH }}\"",
+          "",
+          "if id \"$USER\" &>/dev/null; then",
+          "  echo \"User $USER exists.\"",
+          "",
+          "  if [ \"$REMOVE_ONLY_SSH\" == \"1\" ]; then",
+          "    echo \"Removing SSH access and sudo rights for $USER...\"",
+          "    HOME_DIR=$(eval echo ~$USER)",
+          "    AUTH_KEYS=\"$HOME_DIR/.ssh/authorized_keys\"",
+          "    sudo rm -f \"$AUTH_KEYS\" || true",
+          "    sudo rm -f /etc/sudoers.d/$USER || true",
+          "    echo \"SSH and sudo access removed for $USER.\"",
+          "  else",
+          "    echo \"Removing user: $USER\"",
+          "    sudo pkill -u $USER || true",
+          "    # Check for mail spool and remove if exists",
+          "    MAIL_FILE=\"/var/mail/$USER\"",
+          "    if [ -f \"$MAIL_FILE\" ]; then",
+          "      sudo rm -f \"$MAIL_FILE\"",
+          "    fi",
+          "    sudo userdel -r $USER || true",
+          "    sudo rm -f /etc/sudoers.d/$USER || true",
+          "    echo \"User $USER removed.\"",
+          "  fi",
+          "else",
+          "  echo \"User $USER does not exist. Skipping.\"",
+          "fi"
+        ]
       }
-    ]
-  }
+    }
+  ]
+}
