@@ -57,7 +57,6 @@ if ($Action -eq "checkout") {
             --output text
 
         if ($Status -eq "Success") {
-            Write-Host "Command completed successfully."
             break
         } elseif ($Status -in @("Failed", "Cancelled", "TimedOut")) {
             Write-Error "Command failed with status: $Status"
@@ -68,6 +67,28 @@ if ($Action -eq "checkout") {
     }
 
     Get-Content $KeyPath
+    # Cleanup: Delete local key files
+    Remove-Item -Path $KeyPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "$KeyPath.pub" -Force -ErrorAction SilentlyContinue
+
+    # Optional: Convert .pem to .ppk using PuTTYgen if available
+    <#$PpkPath = "$KeyPath.ppk"
+
+    if (Get-Command "puttygen.exe" -ErrorAction SilentlyContinue) {
+        Write-Host "Converting $KeyPath to PuTTY .ppk format"
+        & puttygen.exe $KeyPath -O private -o $PpkPath
+
+        if (Test-Path $PpkPath) {
+            Get-Content $PpkPath"
+            Remove-Item -Path $PpkPath -Force -ErrorAction SilentlyContinue
+        }
+        else {
+            Write-Warning "Failed to convert to .ppk format."
+        }
+    }
+    else {
+        Write-Warning "PuTTYgen not found in PATH. Skipping .ppk conversion."
+    }#>
 }
 else {
     Write-Host "Removing user $User from instance $Instance"
