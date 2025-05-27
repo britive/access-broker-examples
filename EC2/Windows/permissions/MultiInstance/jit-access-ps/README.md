@@ -2,6 +2,8 @@
 
 This script grants or revokes temporary admin access to Windows EC2 instances using AWS SSM and tag-based filters.
 
+---
+
 ## 📦 Requirements
 
 ### ✅ Step-by-Step (AllUsers Scope)
@@ -63,6 +65,8 @@ PowerShell repository settings are stored in files like:
 * For **CurrentUser** scope: `~\AppData\Local\Microsoft\Windows\PowerShell\PowerShellGet\`
 * For **AllUsers** scope: `%ProgramData%\Microsoft\Windows\PowerShell\PowerShellGet\`
 
+---
+
 ## 📥 Installing AWS CLI v2 (Windows)
 
 ### ✅ Step 1: Download the AWS CLI v2 Installer
@@ -75,15 +79,11 @@ Or download directly:
 
 > [Download AWS CLI v2 MSI installer for Windows (64-bit)](https://awscli.amazonaws.com/AWSCLIV2.msi)
 
----
-
 ### ✅ Step 2: Run the Installer
 
 1. Double-click the downloaded `.msi` file (`AWSCLIV2.msi`).
 2. Follow the prompts to complete the installation.
 3. Accept defaults unless you have specific requirements.
-
----
 
 ### ✅ Step 3: Verify Installation
 
@@ -100,8 +100,6 @@ aws-cli/2.15.21 Python/3.11.5 Windows/10 exe/AMD64 prompt/off
 ```
 
 If you see a "command not found" error, continue to the next step to manually add it to your system `PATH`.
-
----
 
 ### 🔧 Step 4 (Optional): Add AWS CLI to System PATH
 
@@ -120,14 +118,13 @@ C:\Program Files\Amazon\AWSCLIV2\
 3. Under **System variables**, find and select `Path` → click **Edit…**
 4. Click **New**, then paste:
 
-```text
-C:\Program Files\Amazon\AWSCLIV2\
-```
+    ```text
+    C:\Program Files\Amazon\AWSCLIV2\
+    ```
 
 5. Click **OK** to apply changes.
 6. Close and re-open PowerShell.
 
----
 
 ### ✅ Step 5: Re-run Version Check
 
@@ -137,7 +134,6 @@ aws --version
 
 You should now see version output confirming successful installation.
 
----
 
 ### ✅ (Optional) Enable Auto-Completion in PowerShell
 
@@ -154,19 +150,7 @@ aws help
 aws ec2 describe-instances help
 ```
 
-## ⚙️ Environment Variables
-
-* `JIT_TAGS` – JSON string of tag filters. Example:
-
-  ```json
-  {
-    "Environment": "Dev",
-    "App": "MyApp"
-  }
-  ```
-
-* `USER` – Username to grant/revoke access for
-* `JIT_ACTION` – `checkout` or `checkin` (defaults to `checkout`)
+---
 
 ## 📝 Notes
 
