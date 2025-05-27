@@ -1,6 +1,5 @@
 param(
     [string]$Region = $env:REGION,
-    [string]$ProfileName = $env:AWS_PROFILE,
     [string]$TargetRoleArn = $env:ASSUME_ROLE_ARN
 )
 
@@ -34,7 +33,9 @@ function Convert-JsonToEC2TagFilters {
         $filters += @{ Name = "tag:$key"; Values = $values }
     }
 
-    return $filters
+    return $filters | ForEach-Object {
+        New-Object -TypeName Amazon.EC2.Model.Filter -Property $_
+    }
 }
 
 function ConvertTo-SecureStringObject {
@@ -58,7 +59,7 @@ function Set-CrossAccountRole {
     )
 
     try {
-        $creds = Use-STSRole -RoleArn $RoleArn -RoleSessionName $SessionName -Region $Region -ProfileName $ProfileName
+        $creds = Use-STSRole -RoleArn $RoleArn -RoleSessionName $SessionName -Region $Region
         return ConvertTo-SecureStringObject `
             -AccessKeyId $creds.Credentials.AccessKeyId `
             -SecretAccessKey $creds.Credentials.SecretAccessKey `
@@ -71,26 +72,23 @@ function Set-CrossAccountRole {
 
 function Get-InstanceIdsByTags {
     param (
-        [hashtable]$TagFilters,
+        [array]$TagFilters,
         [object]$AssumedCreds
     )
 
-    $filters = @()
-    foreach ($key in $TagFilters.Keys) {
-        $values = $TagFilters[$key]
-        if ($values -is [string]) {
-            $values = $values -split "," | ForEach-Object { $_.Trim() }
-        }
-        $filters += @{ Name = "tag:$key"; Values = $values }
-    }
+    # Decode secure strings
+    $AccessKeyId = $AssumedCreds.AccessKeyId
+    $SecretKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SecretAccessKey))
+    $SessionToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SessionToken))
+
+    # Create AWS credential object
+    $awsCreds = New-Object -TypeName Amazon.Runtime.SessionAWSCredentials -ArgumentList $AccessKeyId, $SecretKey, $SessionToken
 
     try {
         $response = Get-EC2Instance `
             -Region $Region `
-            -AccessKey $AssumedCreds.AccessKeyId `
-            -SecretKey ([Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SecretAccessKey))) `
-            -SessionToken ([Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SessionToken))) `
-            -Filter $filters
+            -Credential $awsCreds `
+            -Filter $TagFilters
 
         $instanceIds = $response.Reservations.Instances |
             Where-Object { $_.State.Name -eq "running" } |
@@ -146,6 +144,7 @@ function Main {
 
     try {
         $tagFilters = Convert-JsonToEC2TagFilters -JsonString $rawTags
+
         $instanceIds = Get-InstanceIdsByTags -TagFilters $tagFilters -AssumedCreds $assumedCreds
 
         if (-not $instanceIds -or $instanceIds.Count -eq 0) {
