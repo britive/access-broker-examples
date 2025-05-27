@@ -32,10 +32,7 @@ function Convert-JsonToEC2TagFilters {
         }
         $filters += @{ Name = "tag:$key"; Values = $values }
     }
-
-    return $filters | ForEach-Object {
-        New-Object -TypeName Amazon.EC2.Model.Filter -Property $_
-    }
+    return $filters
 }
 
 function ConvertTo-SecureStringObject {
@@ -76,28 +73,41 @@ function Get-InstanceIdsByTags {
         [object]$AssumedCreds
     )
 
-    # Decode secure strings
     $AccessKeyId = $AssumedCreds.AccessKeyId
     $SecretKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SecretAccessKey))
     $SessionToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AssumedCreds.SessionToken))
 
-    # Create AWS credential object
-    $awsCreds = New-Object -TypeName Amazon.Runtime.SessionAWSCredentials -ArgumentList $AccessKeyId, $SecretKey, $SessionToken
+    $tempProfile = "temp-jit-$(Get-Random)"
 
     try {
-        $response = Get-EC2Instance `
-            -Region $Region `
-            -Credential $awsCreds `
-            -Filter $TagFilters
+        aws configure set aws_access_key_id $AccessKeyId --profile $tempProfile
+        aws configure set aws_secret_access_key $SecretKey --profile $tempProfile
+        aws configure set aws_session_token $SessionToken --profile $tempProfile
+        aws configure set region $Region --profile $tempProfile
 
-        $instanceIds = $response.Reservations.Instances |
-            Where-Object { $_.State.Name -eq "running" } |
-            Select-Object -ExpandProperty InstanceId -Unique
+        $filterArgs = @()
+        foreach ($filter in $TagFilters) {
+            $name = $filter["Name"]
+            foreach ($value in $filter["Values"]) {
+                $filterArgs += "--filters", "Name=$name,Values=$value"
+            }
+        }
+
+        $cliOutput = & aws ec2 describe-instances `
+            --profile $tempProfile `
+            --region $Region `
+            @filterArgs `
+            --query "Reservations[].Instances[?State.Name=='running'].InstanceId" `
+            --output text
+
+        $instanceIds = $cliOutput -split '\s+' | Where-Object { $_ -ne "" }
 
         return $instanceIds
     } catch {
         Write-Error "[ERROR] Failed to retrieve instance IDs: $_"
         exit 1
+    } finally {
+        aws configure remove --profile $tempProfile
     }
 }
 
@@ -184,4 +194,3 @@ function Main {
 }
 
 Main
-# End of script
