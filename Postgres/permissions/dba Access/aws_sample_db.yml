@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: PostgreSQL RDS with Secrets Manager and EC2 IAM Access
+Description: Self-contained PostgreSQL RDS with VPC, Subnets, Secrets Manager, and EC2 IAM Role
 
 Parameters:
   DBInstanceIdentifier:
@@ -10,34 +10,98 @@ Parameters:
     Default: "demo"
   DBUsername:
     Type: String
-    Default: "admin"
+    Default: "britive"
   DBPassword:
     Type: String
     NoEcho: true
-  VpcId:
-    Type: AWS::EC2::VPC::Id
-  SubnetIds:
-    Type: List<AWS::EC2::Subnet::Id>
 
 Resources:
+  # VPC
+  DemoVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: demo-vpc
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DemoVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DemoVPC
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Subnet 1
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DemoVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+
+  # Subnet 2
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DemoVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+
+  # Subnet Route Associations
+  SubnetRouteTableAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetRouteTableAssoc2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
   # Security Group for RDS
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Allow PostgreSQL access
-      VpcId: !Ref VpcId
+      VpcId: !Ref DemoVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 5432
           ToPort: 5432
-          CidrIp: 0.0.0.0/0 # Replace with trusted CIDR block for production
+          CidrIp: 0.0.0.0/0 # Restrict in production
 
   # DB Subnet Group
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription: Subnet group for PostgreSQL RDS
-      SubnetIds: !Ref SubnetIds
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
 
   # Secrets Manager Secret
   RDSSecret:
@@ -101,14 +165,11 @@ Resources:
         - !Ref EC2InstanceRole
 
 Outputs:
-  SecretName:
-    Description: Name of the Secrets Manager secret
-    Value: !Ref RDSSecret
-
+  VPC:
+    Value: !Ref DemoVPC
   RDSInstanceEndpoint:
-    Description: PostgreSQL RDS endpoint
     Value: !GetAtt PostgresDB.Endpoint.Address
-
-  EC2IAMRole:
-    Description: IAM role to attach to EC2 instance for Secrets Manager access
+  SecretName:
+    Value: !Ref RDSSecret
+  EC2Role:
     Value: !Ref EC2InstanceRole

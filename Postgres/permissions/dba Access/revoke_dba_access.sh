@@ -15,7 +15,7 @@ export PGUSER=$(echo "$CREDS_JSON" | jq -r .username)
 export PGPASSWORD=$(echo "$CREDS_JSON" | jq -r .password)
 
 # --- Prepare variables ---
-DB_USER=$(echo "$USER_EMAIL" | tr '@.' '__')
+DB_USER="${USER_EMAIL%@*}"  # strips domain
 
 echo "Revoking DBA access and deleting user $USER_EMAIL ($DB_USER) on $DB_NAME..."
 
