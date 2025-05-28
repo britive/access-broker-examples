@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: PostgreSQL RDS with Secrets Manager and EC2 IAM Access
+
+Parameters:
+  DBInstanceIdentifier:
+    Type: String
+    Default: "demo-postgres-db"
+  DBName:
+    Type: String
+    Default: "demo"
+  DBUsername:
+    Type: String
+    Default: "admin"
+  DBPassword:
+    Type: String
+    NoEcho: true
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+
+Resources:
+  # Security Group for RDS
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow PostgreSQL access
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0 # Replace with trusted CIDR block for production
+
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for PostgreSQL RDS
+      SubnetIds: !Ref SubnetIds
+
+  # Secrets Manager Secret
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: demo-postgres-secret
+      Description: RDS login credentials
+      SecretString: !Sub |
+        {
+          "username": "${DBUsername}",
+          "password": "${DBPassword}",
+          "engine": "postgres",
+          "host": "",
+          "port": 5432
+        }
+
+  # PostgreSQL RDS instance
+  PostgresDB:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      VPCSecurityGroups: [!GetAtt RDSSecurityGroup.GroupId]
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: true
+      BackupRetentionPeriod: 0
+
+  # IAM Role for EC2 to access the secret
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EC2RDSSecretAccessRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: AccessSpecificRDSSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref RDSSecret
+
+  # Instance Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+Outputs:
+  SecretName:
+    Description: Name of the Secrets Manager secret
+    Value: !Ref RDSSecret
+
+  RDSInstanceEndpoint:
+    Description: PostgreSQL RDS endpoint
+    Value: !GetAtt PostgresDB.Endpoint.Address
+
+  EC2IAMRole:
+    Description: IAM role to attach to EC2 instance for Secrets Manager access
+    Value: !Ref EC2InstanceRole
