@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Self‑hosted Cassandra EC2 + Secrets + KMS + Runner
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags: [{Key: Name,Value: cassandra-vpc}]
+
+  Subnet:
+  ...
+
+  SecurityGroup:
+  ...
+
+  CassandraKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: For Cassandra admin password
+      EnableKeyRotation: true
+
+  CassandraSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: cassandra/admin/password
+      KmsKeyId: !Ref CassandraKMSKey
+      SecretString: '{"username":"cassandra","password":"ChangeMe123!"}'
+
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: ...
+      Policies:
+        - PolicyName: RunnerAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - kms:Decrypt
+                Resource: !Ref CassandraSecret
+
+  RunnerInstance:
+    Type: AWS::EC2::Instance
+    Properties: ...
+    UserData:
+      Fn::Base64: |
+        #!/bin/bash
+        yum update -y
+        yum install -y java-11-amazon-corretto aws-cli jq
+        pip3 install cqlsh boto3
+
+  CassandraInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.medium
+      KeyName: !Ref KeyPairName
+      # Cassandra install in UserData
+
+Outputs:
+  CassandraRunnerIP:
+  CassandraAdminSecretARN:
+  RunnerRoleName:
+

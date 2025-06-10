@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Amazon Keyspaces + IAM + EC2 runner
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 SSH KeyPair name
+
+Resources:
+  # Keyspaces
+  MyKeyspacesKeyspace:
+    Type: AWS::Cassandra::Keyspace
+    Properties:
+      KeyspaceName: my_keyspace
+
+  MyKeyspacesTable:
+    Type: AWS::Cassandra::Table
+    Properties:
+      KeyspaceName: !Ref MyKeyspacesKeyspace
+      TableName: my_table
+      PartitionKeyColumns:
+        - ColumnName: id
+          ColumnType: uuid
+
+  KeyspacesAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+         - Effect: Allow
+           Principal:
+             Service: ec2.amazonaws.com
+           Action: sts:AssumeRole
+
+  KeyspacesAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: KeyspacesSimpleAccess
+      Roles: [!Ref KeyspacesAccessRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - cassandra:Select
+              - cassandra:Modify
+            Resource: !Sub arn:aws:cassandra:::keyspace/${MyKeyspacesKeyspace}/table/${MyKeyspacesTable}
+
+  RunnerEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      KeyName: !Ref KeyPairName
+      ImageId: ami-0f2b4fc905b0bd1f1
+      IamInstanceProfile:
+        Roles: [!Ref KeyspacesAccessRole]
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum update -y
+          yum install -y java-11-amazon-corretto aws-cli
+          # Install SigV4 plugin for cqlsh, etc.
+
+Outputs:
+  RunnerPublicIP:
+    Description: Runner instance public IP
+    Value: !GetAtt RunnerEC2.PublicIp
+  KeyspaceName:
+    Description: Created Keyspace
+    Value: !Ref MyKeyspacesKeyspace
+  TableName:
+    Description: Created Table
+    Value: !Ref MyKeyspacesTable
+
