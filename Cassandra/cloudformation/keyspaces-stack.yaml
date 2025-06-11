@@ -1,11 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: Amazon Keyspaces + IAM + EC2 runner
 
-Parameters:
-  KeyPairName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: EC2 SSH KeyPair name
-
 Resources:
   # Keyspaces
   MyKeyspacesKeyspace:
