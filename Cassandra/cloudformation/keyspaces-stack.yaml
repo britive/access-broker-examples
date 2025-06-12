@@ -32,7 +32,8 @@ Resources:
     Type: AWS::IAM::Policy
     Properties:
       PolicyName: KeyspacesSimpleAccess
-      Roles: [!Ref KeyspacesAccessRole]
+      Roles:
+        - !Ref KeyspacesAccessRole
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
