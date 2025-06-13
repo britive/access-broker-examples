@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Amazon Keyspaces + IAM + EC2 runner
+
+Resources:
+  # Keyspaces
+  MyKeyspacesKeyspace:
+    Type: AWS::Cassandra::Keyspace
+    Properties:
+      KeyspaceName: demo_keyspace
+
+  MyKeyspacesTable:
+    Type: AWS::Cassandra::Table
+    Properties:
+      KeyspaceName: !Ref MyKeyspacesKeyspace
+      TableName: demo_table
+      PartitionKeyColumns:
+        - ColumnName: id
+          ColumnType: uuid
+
+  KeyspacesAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+
+  KeyspacesAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: KeyspacesSimpleAccess
+      Roles:
+        - !Ref KeyspacesAccessRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - cassandra:Select
+              - cassandra:Modify
+            Resource: !Sub arn:aws:cassandra:::keyspace/${MyKeyspacesKeyspace}/table/${MyKeyspacesTable}
+
+Outputs:
+  KeyspaceName:
+    Description: Created Keyspace
+    Value: !Ref MyKeyspacesKeyspace
+  TableName:
+    Description: Created Table
+    Value: !Ref MyKeyspacesTable
