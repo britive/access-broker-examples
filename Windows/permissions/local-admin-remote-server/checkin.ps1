@@ -1,7 +1,7 @@
 # Parse the variables
-$UserUPN = $env:user
-$TargetComputer = $env:target
-$TargetGroup = $env:group   # e.g., "Remote Desktop Users" or "Administrators"
+$UserUPN = $env:user            # e.g., "jdoe@net.domain.com
+$TargetComputer = $env:target   # e.g., "server01.net.domain.com" or "server02.net.domain.com"
+$TargetGroup = $env:group       # e.g., "Remote Desktop Users" or "Administrators"
 
 # Command to run on remote computer
 $scriptBlock = {
