@@ -1,6 +1,8 @@
 
 # AS400 Access Automation with Britive
 
+**DRAFT SCRIPTS**
+
 ## Overview
 
 This toolkit allows you to create and remove short-lived IBM i (AS400) accounts using Britive automation.
