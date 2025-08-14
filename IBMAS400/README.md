@@ -53,13 +53,16 @@ Britive will handle time-based account expiry. These scripts simply create and r
 ### For ACS (Primary)
 
 - IBM Access Client Solutions installed.
-- ACS `system` command available in PATH.
+- Download IBM ACS from IBM Fix Central.
+- Add `acslaunch_win-64.exe` and `system` command to your PATH.
 
 ### For SSH (Backup Options)
 
 - AS400 SSH service enabled.
 - Admin account has SSH access.
 - OpenSSH client installed.
+  - On Windows: `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0`
+  - On Mac/Linux: Already installed by default.
 
 ---
 
@@ -76,16 +79,3 @@ Britive will handle time-based account expiry. These scripts simply create and r
 ### 3. Bash + SSH (as400_ssh.sh)
 
 - Uses `ssh` from Bash shell to run AS400 commands.
-
----
-
-## Installing IBM ACS
-
-1. Download IBM ACS from IBM Fix Central.
-2. Install Java if required.
-3. Add `acslaunch_win-64.exe` and `system` command to your PATH.
-
-## Installing SSH Client
-
-- On Windows: `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0`
-- On Mac/Linux: Already installed by default.
