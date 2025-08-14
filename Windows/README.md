@@ -4,7 +4,7 @@ To assign granular privileges like `SeRemoteInteractiveLogonRight` and `SeAddUse
 
 ---
 
-## ✅ Steps to Grant `SeRemoteInteractiveLogonRight`, `SeAddUsersPrivilege`, and Remote Management Rights to a gMSA
+## ✅ Steps to Grant `SeRemoteInteractiveLogonRight`, `SeAddUsersPrivilege`, and Remote Management Rights to a ServiceAccount
 
 ### 🔹 1. Create or Update a GPO That Applies to Target Servers
 
