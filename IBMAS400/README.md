@@ -8,25 +8,47 @@
 This toolkit allows you to create and remove short-lived IBM i (AS400) accounts using Britive automation.
 It supports three automation options:
 
-1. **Primary** – PowerShell with IBM Access Client Solutions (ACS) `system` command.
-2. **Backup #1** – PowerShell with SSH.
-3. **Backup #2** – Bash with SSH.
+### Primary & Backup Strategy
+
+- **Primary:** Use ACS script (`as400_acs.ps1`) for direct command execution.
+- **Backup #1:** Use SSH script (`as400_ssh.ps1`) if ACS is unavailable.
+- **Backup #2:** Use Bash SSH script (`as400_ssh.sh`) for Linux/Mac environments.
 
 Britive will handle time-based account expiry. These scripts simply create and remove users based on environment variables passed at runtime.
+
+### Britive configured to pass required environment variables
+
+- `AS400_HOST` – Hostname or IP of the AS400.
+- `AS400_ADMIN_USER` – Admin username with authority to manage users.
+- `AS400_ADMIN_PASS` – Admin password.
+- `AS400_NEW_USER` – User ID to create/remove.
+- `AS400_NEW_USER_DESC` – User description.
+- `AS400_ACTION` – Either `checkout` or `checkin`. Automatically handled by Britive.
 
 ---
 
 ## Prerequisites
 
-### Common
+### On the IBM i (AS/400) System
 
-- Britive configured to pass required environment variables:
-  - `AS400_HOST` – Hostname or IP of the AS400.
-  - `AS400_ADMIN_USER` – Admin username with authority to manage users.
-  - `AS400_ADMIN_PASS` – Admin password.
-  - `AS400_NEW_USER` – User ID to create/remove.
-  - `AS400_NEW_USER_DESC` – User description.
-  - `AS400_ACTION` – Either `create` or `remove`.
+1. **Automation Service Profile**:
+   - Must have `*SECADM` authority (to create/change/delete user profiles).
+   - `*ALLOBJ` authority recommended if broad access needs to be granted.
+2. **SSH Access**:
+   - SSH must be enabled (`STRTCPSVR SERVER(*SSHD)`).
+   - The automation profile must be allowed to log in via SSH.
+3. **CL Command Access**:
+   - The automation profile must be able to run commands like:
+     - `CRTUSRPRF`
+     - `CHGUSRPRF`
+     - `DLTUSRPRF`
+     - `GRTOBJAUT`
+
+### On the Access Broker Server
+
+1. PowerShell 7+ installed ([Download PowerShell](https://github.com/PowerShell/PowerShell))
+2. Network connectivity to the IBM i host.
+3. SSH client installed (PowerShell 7+ includes one by default).
 
 ### For ACS (Primary)
 
@@ -54,37 +76,6 @@ Britive will handle time-based account expiry. These scripts simply create and r
 ### 3. Bash + SSH (as400_ssh.sh)
 
 - Uses `ssh` from Bash shell to run AS400 commands.
-
----
-
-## Example Commands
-
-### Creating a user
-
-  ```powershell
-  $env:AS400_ACTION = "create"
-  $env:AS400_HOST = "my-as400.example.com"
-  $env:AS400_ADMIN_USER = "QSECOFR"
-  $env:AS400_ADMIN_PASS = "supersecret"
-  $env:AS400_NEW_USER = "TEMPUSER1"
-  $env:AS400_NEW_USER_DESC = "Temporary user for troubleshooting"
-  ./as400_acs.ps1
-  ```
-
-### Removing a user
-
-  ```powershell
-  $env:AS400_ACTION = "remove"
-  ./as400_acs.ps1
-  ```
-
----
-
-## Primary & Backup Strategy
-
-- **Primary:** Use ACS script (`as400_acs.ps1`) for direct command execution.
-- **Backup #1:** Use SSH script (`as400_ssh.ps1`) if ACS is unavailable.
-- **Backup #2:** Use Bash SSH script (`as400_ssh.sh`) for Linux/Mac environments.
 
 ---
 
