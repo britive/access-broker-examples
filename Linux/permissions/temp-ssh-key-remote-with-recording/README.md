@@ -191,6 +191,11 @@ The encryption key must be stored in AWS Secrets Manager with the following form
 - Keys should be rotated periodically
 - Access to AWS Secrets Manager should be restricted
 
+### Alternatives
+
+Alternatively, the shared secret can also be stored in on-premises vault that the broker script can have access to.
+The Secret can also be put into the Britive UI for it to be sent to the broker at run time.
+
 ## Session Recording
 
 ### Recording Features
