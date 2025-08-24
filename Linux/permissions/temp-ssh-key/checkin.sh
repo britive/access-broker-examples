@@ -29,4 +29,10 @@ if test -f /etc/sudoers.d/${USER}; then
   rm -f /etc/sudoers.d/${USER} > /dev/null 2>&1
 fi
 
+# Optionally kill active SSH sessions for this user
+if [[ "${KILL_SESSION}" == "1" ]]; then
+  echo "Killing SSH sessions for ${USER}"
+  pkill -u "${USER}" sshd || true
+fi
+
 finish 0
