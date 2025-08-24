@@ -6,6 +6,7 @@ USERNAME="${USERNAME//[^a-zA-Z0-9]/}"
 
 USER=${USERNAME}
 TRX=${TRX:-"default-trx-id"}
+KILL_SESSION=${KILL_SESSION:-"0"}
 
 SSH_PATH=/${BRITIVE_HOME_ROOT:-"home"}/${USER}/.ssh
 
@@ -28,6 +29,12 @@ fi
 # Remove sudo privileges if they exist
 if test -f /etc/sudoers.d/${USER}; then
   rm -f /etc/sudoers.d/${USER} > /dev/null 2>&1
+fi
+
+# Optionally kill active SSH sessions for this user
+if [[ "${KILL_SESSION}" == "1" ]]; then
+  echo "Killing SSH sessions for ${USER}"
+  pkill -u "${USER}" sshd || true
 fi
 
 finish 0
