@@ -15,7 +15,7 @@ finish () {
 
 if test -d $SSH_PATH; then
   # Remove only the key line that matches both USER_EMAIL and TRX
-  mapfile -t contents < <(cat $SSH_PATH/authorized_keys 2>/dev/null | grep -v "${USER_EMAIL}.*trx=${TRX}")
+  mapfile -t contents < <(grep -v "${USER_EMAIL}.*trx-id=${TRX}" $SSH_PATH/authorized_keys 2>/dev/null)
 
   if (( ${#contents[@]} > 0 )); then
     printf "%s\n" "${contents[@]}" > $SSH_PATH/authorized_keys || finish 1
