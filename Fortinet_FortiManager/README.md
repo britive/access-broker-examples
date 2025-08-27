@@ -11,6 +11,9 @@ Britive is used as the access broker, granting time-bound privileged access. The
     ✅ Check-in: Automatically log out the user (if active), delete the session, and clean up the account from FortiManager.
 
 🛠️ How It Works
+
+As per the broker yml config, these scripts should be deployed on the Britive Access Broker machine/server. Britive also allows saving those scripts in the Britive UI. Changes to yml will be required for saving and executing checkout and checkin scripts directly from the Britive UI. 
+
 1. FortiManager_checkout.sh
 
     Creates a JIT user account in FortiManager using sanitized email input.
