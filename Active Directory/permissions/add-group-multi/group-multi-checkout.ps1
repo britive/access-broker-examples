@@ -9,7 +9,7 @@ $Prefix = $env:prefix
 
 
 # Strip the username from the email address and append "Prefix"
-$Username = ($Email -split "@")[0] + $Prefix
+$Username = $Prefix + ($Email -split "@")[0]
 
 # Check if user exists
 $User = Get-ADUser -Filter {SamAccountName -eq $Username} -ErrorAction SilentlyContinue
