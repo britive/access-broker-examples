@@ -1,6 +1,6 @@
 # Active Directory Access
 
-This folder contains various examples Powershell scripts.
+This folder contains various examples PowerShell scripts.
 These scripts allow for better access management in Active Directory. The goal here is to secure high privilege access by granting ephemeral access or rotating credentials of powerful user accounts.
 
 To **run Active Directory (AD) cmdlets like `Get-ADUser` or `Add-ADGroupMember` on a Windows machine**, the following prerequisites must be met:
@@ -54,16 +54,16 @@ For Active Directory group membership updates:
 
 How to Assign the Permissions (Delegation)
 You can use Active Directory Users and Computers (ADUC) to delegate these rights:
-1.	Open ADUC and enable Advanced Features (View > Advanced Features).
-2.	Right-click the target group (or parent OU if doing this broadly) and select Properties.
-3.	Go to the Security tab and click Advanced.
-4.	Click Add, then:
-    o	Select the service account.
-    o	Set Applies to: This object only.
-    o	Under Permissions, check:
-        1.	Read members
-        2.	Write members
-5.	Save and apply changes.
+- Open ADUC and enable Advanced Features (View > Advanced Features).
+- Right-click the target group (or parent OU if doing this broadly) and select Properties.
+- Go to the Security tab and click Advanced.
+- Click Add, then:
+    - Select the service account.
+    - Set Applies to: This object only.
+    - Under Permissions, check:
+        - Read members
+        - Write members
+- Save and apply changes.
 Additionally, to rotate temporary account credentials and to manage user account states, assign User Account management permission at the appropriate OU level.
 
 
