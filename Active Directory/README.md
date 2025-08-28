@@ -58,11 +58,11 @@ You can use Active Directory Users and Computers (ADUC) to delegate these rights
 2.	Right-click the target group (or parent OU if doing this broadly) and select Properties.
 3.	Go to the Security tab and click Advanced.
 4.	Click Add, then:
-o	Select the service account.
-o	Set Applies to: This object only.
-o	Under Permissions, check:
-1.	Read members
-2.	Write members
+    o	Select the service account.
+    o	Set Applies to: This object only.
+    o	Under Permissions, check:
+        1.	Read members
+        2.	Write members
 5.	Save and apply changes.
 Additionally, to rotate temporary account credentials and to manage user account states, assign User Account management permission at the appropriate OU level.
 
