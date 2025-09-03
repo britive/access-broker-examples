@@ -47,7 +47,7 @@ Session End → Checkin Script → MongoDB Atlas API → Temporary User Deleted 
 
 The solution consists of two main scripts:
 
-#### Checkout Script (`checkout.sh`)
+#### Checkout Script (`mongoDB_dbAdmin_jit_checkout.sh`)
 Assign temporary MongoDB Atlas dbAdmin permission upon access request.
 
 ```bash
@@ -58,7 +58,7 @@ PROJECT_ID="${mongoDB_project_id}"
 USERNAME=${username}  # Automatically captured from SSO user email during checkout
 ```
 
-#### Checkin Script (`checkin.sh`)
+#### Checkin Script (`mongoDB_dbAdmin_jit_checkin.sh`)
 Revoke temporary MongoDB Atlas dbAdmin permission upon or checkin or timer expiry.
 
 ### 3. Britive Integration Setup
@@ -76,13 +76,6 @@ Revoke temporary MongoDB Atlas dbAdmin permission upon or checkin or timer expir
    - Associate checkout/checkin scripts with each profile
    - Set appropriate timeout values (recommended: 1-8 hours)
 
-## 📁 Repository Structure
-
-```
-├── checkout.sh           # Creates temporary MongoDB user
-├── checkin.sh           # Removes temporary MongoDB user
-├── README.md            # This file
-```
 
 ## 🔧 Configuration Details
 
