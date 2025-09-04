@@ -1,0 +1,10 @@
+# Uncomment and modify as needed
+# This Britive Access Broker yml config file has few lines because the checkout/checkin scrips are saved in the Britive UI
+# The script is downloaded from the UI to S3 bucket and then executed locally on the broker at run-time
+config:
+  #  cache_path: ${britive.broker.action.command.cache} # default to ./cache if not provided
+  bootstrap:
+    tenant_subdomain: demo
+    #    authentication_token_generator: ${britive.broker.authentication.token.script}  # optional
+    authentication_token: <token>
+    broker_name_generator: broker-name-generator.sh
