@@ -18,6 +18,40 @@ This script automates the process of creating a new SQL Server login and databas
   - ADMIN_PASSWORD: The password for the administrator.
   - EMAIL: The email address from which the new user's username will be derived.
 
+## Required Service Account Permissions
+
+The admin service account used by these scripts requires the following minimum permissions:
+
+### Server-Level Permissions (Master Database)
+
+- **ALTER ANY LOGIN** - Required to create and drop SQL Server logins
+- **VIEW SERVER STATE** - Required to query `sys.dm_exec_sessions` for active sessions
+- **ALTER ANY CONNECTION** - Required to kill user sessions using the KILL command
+
+### Database-Level Permissions (Target Database)
+
+- **ALTER ANY USER** - Required to create and drop database users
+- **ALTER ANY ROLE** - Required to add users to database roles (specifically `db_owner`)
+- **VIEW DATABASE STATE** - Required to query system views for user existence checks
+
+### Recommended Service Account Setup
+
+```sql
+-- Create service account login
+CREATE LOGIN [temp_access_service] WITH PASSWORD = 'SecurePassword123!';
+
+-- Grant server-level permissions
+GRANT ALTER ANY LOGIN TO [temp_access_service];
+GRANT VIEW SERVER STATE TO [temp_access_service];
+GRANT ALTER ANY CONNECTION TO [temp_access_service];
+
+-- Grant database-level permissions (run this on each target database)
+USE [YourTargetDatabase];
+CREATE USER [temp_access_service] FOR LOGIN [temp_access_service];
+GRANT ALTER ANY USER TO [temp_access_service];
+GRANT ALTER ANY ROLE TO [temp_access_service];
+GRANT VIEW DATABASE STATE TO [temp_access_service];
+
 ## Script Functionality
 
 ### Checkout Script **temp_dba_checkout.sh**
