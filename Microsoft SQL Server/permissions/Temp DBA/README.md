@@ -11,7 +11,7 @@ This script automates the process of creating a new SQL Server login and databas
 
 - `sqlcmd` tool installed. Refer to [this link](https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-setup-tools?view=sql-server-ver16&tabs=ubuntu-install#ubuntu) for more details.
 - `openssl` installed for password generation.
-- Environment variables SERVER_NAME, DATABASE_NAME, ADMIN_USER, ADMIN_PASSWORD, and EMAIL must be set in the profile via the Britive UI. Britive rEsource management configuration must include these variables to successfully run this routine.
+- Environment variables SERVER_NAME, DATABASE_NAME, ADMIN_USER, ADMIN_PASSWORD, and EMAIL must be set in the profile via the Britive UI. Britive Resource management configuration must include these variables to run this routine successfully.
   - SERVER_NAME: The name of the SQL Server.
   - DATABASE_NAME: The name of the target database.
   - ADMIN_USER: The administrator username with sufficient privileges to create logins and users.
@@ -36,6 +36,8 @@ The admin service account used by these scripts requires the following minimum p
 
 ### Recommended Service Account Setup
 
+#### For SQL Server
+
 ```sql
 -- Create service account login
 CREATE LOGIN [temp_access_service] WITH PASSWORD = 'SecurePassword123!';
@@ -51,6 +53,26 @@ CREATE USER [temp_access_service] FOR LOGIN [temp_access_service];
 GRANT ALTER ANY USER TO [temp_access_service];
 GRANT ALTER ANY ROLE TO [temp_access_service];
 GRANT VIEW DATABASE STATE TO [temp_access_service];
+```
+
+#### You use contained database users, scoped at the database level only:
+
+```sql
+-- Run this inside each target database
+
+-- 1. Create a contained user with a password
+CREATE USER [temp_access_service] 
+WITH PASSWORD = 'SecurePassword123!';
+
+-- 2. Grant database-level permissions
+GRANT ALTER ANY USER TO [temp_access_service];
+GRANT ALTER ANY ROLE TO [temp_access_service];
+GRANT VIEW DATABASE STATE TO [temp_access_service];
+
+-- (Optional) If you also want read/write access to data
+ALTER ROLE db_datareader ADD MEMBER [temp_access_service];
+ALTER ROLE db_datawriter ADD MEMBER [temp_access_service];
+
 ```
 
 ## Script Functionality
