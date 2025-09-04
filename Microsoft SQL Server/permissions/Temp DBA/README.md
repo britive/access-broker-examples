@@ -1,7 +1,7 @@
 
 # Microsoft SQL Server Management for DB Owner
 
-This permission dir provides Bash scripts to manage MS SQL identities, specifically for adding and removing a user with set permissions on the MS SQL Server.
+This permission directory provides Bash scripts to manage MS SQL identities, specifically for adding and removing a user with set permissions on the MS SQL Server.
 
 ## Overview
 
@@ -51,6 +51,7 @@ CREATE USER [temp_access_service] FOR LOGIN [temp_access_service];
 GRANT ALTER ANY USER TO [temp_access_service];
 GRANT ALTER ANY ROLE TO [temp_access_service];
 GRANT VIEW DATABASE STATE TO [temp_access_service];
+```
 
 ## Script Functionality
 
