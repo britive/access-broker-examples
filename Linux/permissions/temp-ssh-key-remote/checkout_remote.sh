@@ -14,6 +14,7 @@ SUDO=${BRITIVE_SUDO:-"0"}
 HOME_ROOT=${BRITIVE_HOME_ROOT:-"home"}
 REMOTE_USER=${REMOTE_USER:-"ec2-user"}  # default AWS user
 REMOTE_HOST=${HOST}
+CONVERT_TO_PPK=${CONVERT_TO_PPK:-"1"}  # Set to "1" to include PPK format in output
 
 REMOTE_KEY="/home/britivebroker/MYKEY.pem"  # <-- Path to your AWS PEM file
 
@@ -77,10 +78,35 @@ sudo chown "\$USER:\$USER" "\$SSH_PATH/authorized_keys"
 EOF
 
 # ==============================
-# Output private key
+# Output private key in JSON format
 # ==============================
 
-cat "$SSH_KEY_LOCAL"
+# Prepare PEM content as single line
+PEM_SINGLE_LINE="$(tr '\n' '\\' < "$SSH_KEY_LOCAL" | sed 's/\\/\\n/g')"
+
+# Convert to PPK if requested
+if [ "$CONVERT_TO_PPK" = "1" ]; then
+    # Check if puttygen is available
+    if command -v puttygen >/dev/null 2>&1; then
+        PPK_FILE="$TMP_DIR/britive-id_rsa.ppk"
+        puttygen "$SSH_KEY_LOCAL" -o "$PPK_FILE" -O private >/dev/null 2>&1
+        
+        if [ -f "$PPK_FILE" ]; then
+            PPK_SINGLE_LINE="$(tr '\n' '\\' < "$PPK_FILE" | sed 's/\\/\\n/g')"
+            # Output JSON with both PEM and PPK
+            jq -n --arg pemContent "$PEM_SINGLE_LINE" --arg ppkContent "$PPK_SINGLE_LINE" '{pemContent: $pemContent, ppkContent: $ppkContent}'
+        else
+            echo "Warning: PPK conversion failed, outputting PEM only" >&2
+            jq -n --arg pemContent "$PEM_SINGLE_LINE" '{pemContent: $pemContent}'
+        fi
+    else
+        echo "Warning: puttygen not found, outputting PEM only (install putty-tools for PPK support)" >&2
+        jq -n --arg pemContent "$PEM_SINGLE_LINE" '{pemContent: $pemContent}'
+    fi
+else
+    # Output JSON with PEM only
+    jq -n --arg pemContent "$PEM_SINGLE_LINE" '{pemContent: $pemContent}'
+fi
 
 rm -rf "$TMP_DIR"
 
