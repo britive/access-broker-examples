@@ -14,7 +14,7 @@ SUDO=${BRITIVE_SUDO:-"0"}
 HOME_ROOT=${BRITIVE_HOME_ROOT:-"home"}
 REMOTE_USER=${REMOTE_USER:-"ec2-user"}  # default AWS user
 REMOTE_HOST=${HOST}
-CONVERT_TO_PPK=${CONVERT_TO_PPK:-"0"}  # Set to "1" to include PPK format in output
+CONVERT_TO_PPK=${CONVERT_TO_PPK:-"1"}  # Set to "1" to include PPK format in output
 
 REMOTE_KEY="/home/britivebroker/MYKEY.pem"  # <-- Path to your AWS PEM file
 
