@@ -77,10 +77,21 @@ sudo chown "\$USER:\$USER" "\$SSH_PATH/authorized_keys"
 EOF
 
 # ==============================
-# Output private key
+# Output private key in JSON format
 # ==============================
 
-cat "$SSH_KEY_LOCAL"
+# Function to escape JSON string properly
+json_escape() {
+    local input="$1"
+    # Escape backslashes first, then double quotes, then newlines and other control chars
+    printf '%s' "$input" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/\r/\\r/g' | sed 's/\t/\\t/g'
+}
+
+# Read the private key and escape it for JSON
+SSH_KEY_ESCAPED=$(json_escape "$(cat "$SSH_KEY_LOCAL")")
+
+# Output as clean JSON with proper formatting
+printf '{"pemContent":"%s"}\n' "$SSH_KEY_ESCAPED"
 
 rm -rf "$TMP_DIR"
 
