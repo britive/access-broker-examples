@@ -14,11 +14,11 @@ ACTION="${ACTION:?ACTION not set (use add or remove)}"
 # Build AS400 Command
 # ==============================
 case "$ACTION" in
-  add)
+  checkout)
     # Add user to a group (primary group example)
     AS400_COMMAND="CHGUSRPRF USRPRF($TARGET_USER) GRPPRF($TARGET_GROUP)"
     ;;
-  remove)
+  checkin)
     # Remove user from primary group (set to *NONE)
     AS400_COMMAND="CHGUSRPRF USRPRF($TARGET_USER) GRPPRF(*NONE)"
     ;;
