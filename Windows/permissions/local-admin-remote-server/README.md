@@ -22,12 +22,14 @@ These scripts enable just-in-time (JIT) access management by adding and removing
 ## Prerequisites
 
 ### PowerShell Remoting
+
 - **WinRM Service**: Must be running on target servers
 - **PowerShell Remoting**: Enabled on target servers
 - **Network Connectivity**: Management server must reach target servers
 - **Execution Policy**: Allow script execution
 
 ### Authentication
+
 - **Credentials**: Appropriate credentials for remote server access
 - **Permissions**: Rights to manage local groups on target servers
 - **Kerberos/NTLM**: Properly configured authentication
@@ -95,6 +97,7 @@ The scripts work with any Windows local group, including:
 Both scripts implement comprehensive error handling:
 
 ### Common Error Scenarios
+
 - **User Not Found**: Domain user doesn't exist or isn't accessible
 - **Group Not Found**: Specified local group doesn't exist on target server
 - **Access Denied**: Insufficient privileges to modify group membership
@@ -103,6 +106,7 @@ Both scripts implement comprehensive error handling:
 - **User Not Member**: (Checkin) User is not a member of the group
 
 ### Error Output Format
+
 ```powershell
 Write-Error "Failed to add user jdoe@domain.com to group Administrators: Access denied"
 ```
@@ -110,48 +114,23 @@ Write-Error "Failed to add user jdoe@domain.com to group Administrators: Access 
 ## Security Considerations
 
 ### Execution Security
+
 - **Least Privilege**: Execute with minimum required permissions
 - **Secure Channels**: PowerShell remoting uses encrypted communication
 - **Authentication**: Leverages Windows integrated authentication
 - **Audit Logging**: All operations should be logged for compliance
 
 ### Access Control
+
 - **Time-Limited Access**: Implement time-based access controls
 - **Approval Workflows**: Integrate with approval systems before execution
 - **Session Monitoring**: Monitor user activity during elevated access
 - **Automatic Cleanup**: Ensure checkin processes run reliably
 
-## Integration Patterns
-
-### PAM Integration
-```powershell
-# Typical PAM workflow
-1. User requests access via PAM system
-2. PAM system sets environment variables
-3. PAM executes checkout.ps1
-4. User performs authorized activities  
-5. PAM executes checkin.ps1 (time-based or manual)
-```
-
-### Automation Scripts
-```powershell
-# Example wrapper script
-param($UserUPN, $TargetServer, $GroupName, $Action)
-
-$env:user = $UserUPN
-$env:target = $TargetServer
-$env:group = $GroupName
-
-if ($Action -eq "grant") {
-    .\checkout.ps1
-} elseif ($Action -eq "revoke") {
-    .\checkin.ps1
-}
-```
-
 ## Monitoring and Auditing
 
 ### PowerShell Logging
+
 Enable PowerShell script block logging to capture all script execution:
 
 ```powershell
@@ -160,12 +139,15 @@ Enable PowerShell script block logging to capture all script execution:
 ```
 
 ### Event Log Monitoring
+
 Monitor Windows Event Logs on target servers:
+
 - **Security Log**: User group membership changes (Event ID 4732, 4733)
 - **System Log**: Service and authentication events
 - **PowerShell Operational Log**: Script execution details
 
 ### Custom Logging
+
 Consider adding custom logging to scripts:
 
 ```powershell
@@ -177,6 +159,7 @@ Add-Content -Path "C:\Logs\GroupManagement.log" -Value $logEntry
 ## Troubleshooting
 
 ### Connection Issues
+
 ```powershell
 # Test PowerShell remoting
 Test-WSMan -ComputerName $env:target
@@ -186,6 +169,7 @@ Invoke-Command -ComputerName $env:target -ScriptBlock { Get-ComputerInfo }
 ```
 
 ### Permission Issues
+
 ```powershell
 # Verify current user permissions
 whoami /groups
@@ -196,6 +180,7 @@ Invoke-Command -ComputerName $env:target -ScriptBlock { Get-LocalGroup }
 ```
 
 ### Group Membership Verification
+
 ```powershell
 # Check current group membership
 Invoke-Command -ComputerName $env:target -ScriptBlock { 

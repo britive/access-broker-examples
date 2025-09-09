@@ -1,6 +1,6 @@
 # Temporary Local User
 
-This directory contains PowerShell scripts for creating and managing temporary local user accounts with automatic password generation and comprehensive cleanup capabilities. It provides a complete lifecycle management solution for temporary access scenarios.
+This directory contains PowerShell scripts for creating and managing temporary local user accounts with automatic password generation and comprehensive cleanup capabilities. It provides a complete lifecycle management solution for temporary access scenarios to be sued by the Britive Access Broker.
 
 ## Overview
 
@@ -14,6 +14,7 @@ These scripts enable the creation of temporary local user accounts for short-ter
 ## Key Features
 
 ### Checkout Process (`checkout.ps1`)
+
 - **Automatic Password Generation**: Creates secure 12-character passwords with mixed character sets
 - **User Account Management**: Creates new users or resets passwords for existing users
 - **Group Assignment**: Automatically adds users to specified local groups
@@ -21,6 +22,7 @@ These scripts enable the creation of temporary local user accounts for short-ter
 - **Username Sanitization**: Removes non-alphanumeric characters from usernames
 
 ### Checkin Process (`checkin.ps1`)
+
 - **Complete User Removal**: Permanently deletes local user accounts
 - **RDP Session Termination**: Optional killing of active RDP sessions
 - **Session Management**: Uses `qwinsta` and `Invoke-RDUserLogoff` for session control
@@ -42,12 +44,14 @@ Optional RDP Kill → Local User Removal → Complete Cleanup
 ## Environment Variables
 
 ### Checkout Script
+
 | Variable | Description | Example | Required |
 |----------|-------------|---------|----------|
 | `$env:email` | User's email address | `john.doe@company.com` | Yes |
 | `$env:group` | Target local group | `Remote Desktop Users` | Yes |
 
-### Checkin Script  
+### Checkin Script
+
 | Variable | Description | Example | Required |
 |----------|-------------|---------|----------|
 | `$env:email` | User's email address | `john.doe@company.com` | Yes |
@@ -110,6 +114,7 @@ $env:killrdp = "1"  # Optional: terminate RDP sessions
 ```
 
 **Expected Output** (if successful):
+
 ```
 Removing local user: johndoe
 ```
@@ -131,6 +136,7 @@ The checkout script can add users to any Windows local group:
 The checkin script includes optional RDP session termination:
 
 ### Session Detection
+
 ```powershell
 # Uses qwinsta command to find user sessions
 $qwinstaOutput = qwinsta $Username
@@ -138,29 +144,34 @@ $sessionIds = # Parse session IDs from output
 ```
 
 ### Session Termination
+
 ```powershell
 # Uses Invoke-RDUserLogoff for forceful session termination
 Invoke-RDUserLogoff -HostServer localhost -UnifiedSessionID $session -Force
 ```
 
 ### Control Flag
+
 - **`$env:killrdp = "1"`**: Terminate RDP sessions before user removal
 - **`$env:killrdp = "0"`** or **unset**: Skip RDP session termination
 
 ## Error Handling
 
 ### Checkout Script Errors
+
 - **Invalid Email**: Script validates `$env:email` and `$env:group` are not null
 - **User Creation Failure**: Handles errors in `New-LocalUser` operations
 - **Group Assignment Failure**: Manages errors in `Add-LocalGroupMember`
 - **Password Generation**: Ensures secure password creation
 
-### Checkin Script Errors  
+### Checkin Script Errors
+
 - **User Not Found**: Gracefully handles cases where user doesn't exist
 - **RDP Session Errors**: Continues with user removal even if session termination fails
 - **Permission Denied**: Reports but continues with cleanup process
 
 ### Error Output Examples
+
 ```powershell
 # User creation error
 Write-Error "Creating new local user: johndoe"
@@ -175,69 +186,32 @@ Write-Error "Error removing local user: Access denied"
 ## Security Considerations
 
 ### Password Security
+
 - **Strong Generation**: 12-character passwords with multiple character types
 - **Random Generation**: New password for each execution
 - **Secure Storage**: Passwords displayed only during checkout
 - **No Persistence**: Passwords not stored in files or logs
 
 ### Account Security
+
 - **Limited Lifespan**: Accounts intended for temporary use only
 - **Group-Based Access**: Access limited by group membership
 - **Regular Cleanup**: Implement automated cleanup processes
 - **Session Control**: Optional RDP session termination
 
 ### Audit and Compliance
+
 - **User Creation Logging**: Windows logs local user creation events
 - **Group Membership Tracking**: Monitor group assignment changes
 - **Session Monitoring**: Track RDP session activities
 - **Regular Review**: Audit temporary account usage patterns
 
-## Integration Patterns
-
-### PAM System Integration
-```powershell
-# Typical PAM workflow:
-1. User requests temporary access via PAM portal
-2. PAM system approves request and sets environment variables
-3. PAM executes checkout.ps1 and captures credentials
-4. PAM provides credentials to user through secure channel
-5. User performs authorized work
-6. PAM automatically executes checkin.ps1 after time limit
-```
-
-### Scheduled Cleanup
-```powershell
-# Example scheduled cleanup script
-$tempUsers = @("contractor1@company.com", "temp.worker@company.com")
-foreach ($userEmail in $tempUsers) {
-    $env:email = $userEmail
-    $env:killrdp = "1"
-    try {
-        .\checkin.ps1
-        Write-Log "Cleaned up user: $userEmail"
-    } catch {
-        Write-Log "Failed to clean up user: $userEmail - $($_.Exception.Message)"
-    }
-}
-```
-
-### Credential Management
-```powershell
-# Parse and secure credential output
-$output = .\checkout.ps1
-$credentials = @{}
-foreach ($line in $output) {
-    if ($line -match "^(username|password):s:(.+)$") {
-        $credentials[$Matches[1]] = $Matches[2]
-    }
-}
-# Store credentials securely for user delivery
-```
-
 ## Monitoring and Auditing
 
 ### Windows Event Logs
+
 Monitor these events:
+
 - **Event ID 4720**: User account created
 - **Event ID 4726**: User account deleted  
 - **Event ID 4732**: Member added to security-enabled local group
@@ -246,7 +220,9 @@ Monitor these events:
 - **Event ID 4634**: Account logoff
 
 ### PowerShell Logging
+
 Enable comprehensive PowerShell logging:
+
 ```powershell
 # Group Policy: Computer Configuration > Administrative Templates > 
 # Windows Components > Windows PowerShell
@@ -257,7 +233,9 @@ Enable comprehensive PowerShell logging:
 ```
 
 ### Custom Logging
+
 Add custom audit logging:
+
 ```powershell
 # Example logging additions
 $logFile = "C:\Logs\TempUserManagement.log"
@@ -269,6 +247,7 @@ Add-Content -Path $logFile -Value $entry
 ## Troubleshooting
 
 ### User Creation Issues
+
 ```powershell
 # Test local user management permissions
 try {
@@ -279,7 +258,8 @@ try {
 }
 ```
 
-### Group Assignment Issues  
+### Group Assignment Issues
+
 ```powershell
 # Verify target group exists
 try {
@@ -291,6 +271,7 @@ try {
 ```
 
 ### RDP Session Issues
+
 ```powershell
 # Test RDP session management
 try {
@@ -303,6 +284,7 @@ try {
 ```
 
 ### Permission Verification
+
 ```powershell
 # Check current user privileges
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
