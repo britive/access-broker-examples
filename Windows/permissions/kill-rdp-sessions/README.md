@@ -19,21 +19,25 @@ The `KillRDPSessions.ps1` script provides automated termination of RDP sessions 
 ## Prerequisites
 
 ### PowerShell Module
+
 ```powershell
 Install-Module -Name Get-ActiveSession
 ```
 
 The script requires the `Get-ActiveSession` PowerShell module from PowerShell Gallery:
+
 - **Module Source**: [PowerShell Gallery - Get-ActiveSession](https://www.powershellgallery.com/packages/Get-ActiveSession/1.0.4)
 - **Version**: 1.0.4 or later
 
 ### CSV Mapping File
+
 The script expects a CSV file at the following location:
 ```
 C:\Program Files (x86)\Britive Inc\Britive Broker\scripts\mappings.csv
 ```
 
 **CSV Format**:
+
 ```csv
 Group,Server
 Group A,Server A
@@ -88,6 +92,7 @@ $env:group = "Group A"
 ## Integration
 
 This script is designed to integrate with:
+
 - **Britive Access Broker**: References Britive-specific file paths
 - **Privileged Access Management (PAM)** systems
 - **Just-In-Time (JIT)** access workflows
