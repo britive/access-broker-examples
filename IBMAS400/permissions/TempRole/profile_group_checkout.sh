@@ -23,7 +23,7 @@ case "$ACTION" in
     AS400_COMMAND="CHGUSRPRF USRPRF($TARGET_USER) GRPPRF(*NONE)"
     ;;
   *)
-    echo "❌ Invalid ACTION: $ACTION (use add or remove)"
+    echo "Invalid ACTION: $ACTION (use add or remove)"
     exit 1
     ;;
 esac
@@ -42,9 +42,9 @@ ssh -i "$AS400_KEY" \
 STATUS=$?
 
 if [ $STATUS -eq 0 ]; then
-    echo "✅ Successfully executed group $ACTION for $TARGET_USER"
+    echo "Successfully executed group $ACTION for $TARGET_USER"
 else
-    echo "❌ Failed to modify group membership. Exit code: $STATUS"
+    echo "Failed to modify group membership. Exit code: $STATUS"
 fi
 
 exit $STATUS

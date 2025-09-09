@@ -25,9 +25,9 @@ ssh -i "$AS400_KEY" \
 STATUS=$?
 
 if [ $STATUS -eq 0 ]; then
-    echo "✅ Function executed successfully for $TARGET_USER"
+    echo "Function executed successfully for $TARGET_USER"
 else
-    echo "❌ Failed to execute function. Exit code: $STATUS"
+    echo "Failed to execute function. Exit code: $STATUS"
 fi
 
 exit $STATUS
