@@ -68,6 +68,7 @@ $env:target = "server01.corp.domain.com"
 ```
 
 **Expected Output**:
+
 ```
 User john.doe@corp.domain.com added to Administrators group
 ```
@@ -85,6 +86,7 @@ $env:target = "server01.corp.domain.com"
 ```
 
 **Expected Output**:
+
 ```
 User john.doe@corp.domain.com removed from Administrators group
 ```
@@ -92,18 +94,21 @@ User john.doe@corp.domain.com removed from Administrators group
 ## Prerequisites
 
 ### PowerShell Remoting
+
 - **WinRM Service**: Enabled and running on target servers
 - **PowerShell Remoting**: Configured and accessible
 - **Network Connectivity**: Management system can reach target servers
 - **Firewall Rules**: WinRM ports (5985/5986) open
 
 ### Authentication & Permissions
+
 - **Domain Authentication**: Proper Kerberos/NTLM configuration
 - **Administrative Rights**: Permissions to modify Administrators group
 - **Execution Policy**: PowerShell execution enabled
 - **Remote Access**: Rights to execute remote commands
 
 ### Domain Configuration
+
 - **User Accounts**: Target users must exist in the specified domain
 - **Group Policy**: Appropriate policies for remote administration
 - **DNS Resolution**: Proper name resolution for target servers
@@ -113,32 +118,39 @@ User john.doe@corp.domain.com removed from Administrators group
 ### Common Error Scenarios
 
 1. **User Not Found**
+
    ```
    Failed to add user john.doe@corp.domain.com: The specified account does not exist
    ```
 
 2. **Access Denied**  
+
    ```
    Failed to add user john.doe@corp.domain.com: Access is denied
    ```
 
 3. **Server Unreachable**
+
    ```
    Failed to connect to server01.corp.domain.com: WinRM cannot complete the operation
    ```
 
 4. **User Already Administrator** (Checkout)
+
    ```
    Failed to add user john.doe@corp.domain.com: The specified account name is already a member of the group
    ```
 
 5. **User Not Administrator** (Checkin)
+
    ```
    Failed to add user john.doe@corp.domain.com: The specified account name is not a member of the group
    ```
 
 ### Error Note in Checkin Script
+
 There's a comment discrepancy in the checkin script:
+
 ```powershell
 # Line 14: Write-Error "Failed to add user ${RemoteUser}: $($_.Exception.Message)"
 # Should be: Write-Error "Failed to remove user ${RemoteUser}: $($_.Exception.Message)"
@@ -147,68 +159,52 @@ There's a comment discrepancy in the checkin script:
 ## Security Considerations
 
 ### Access Control
+
 - **Time-Limited Access**: Implement automatic timeout/expiration
 - **Approval Workflow**: Require approval before granting admin access  
-- **Session Monitoring**: Monitor administrator activity during access period
 - **Audit Logging**: Log all administrator access grants and revocations
 
 ### Authentication Security
+
 - **Strong Authentication**: Use multi-factor authentication where possible
 - **Least Privilege**: Grant access only when necessary
 - **Regular Review**: Periodically review administrator access grants
 - **Automated Cleanup**: Ensure reliable revocation processes
 
 ### Network Security
+
 - **Encrypted Communication**: PowerShell remoting uses encrypted channels
 - **VPN/Private Networks**: Execute from secure network segments
 - **Firewall Restrictions**: Limit WinRM access to authorized systems
 - **Certificate-Based Authentication**: Consider certificate authentication
 
-## Integration Patterns
-
-### PAM System Integration
-```powershell
-# Typical workflow:
-1. User requests admin access through PAM portal
-2. PAM system validates request and approves
-3. PAM sets environment variables and executes checkout
-4. User performs administrative tasks
-5. PAM automatically executes checkin after time limit
-```
-
-### Scheduled Cleanup
-```powershell
-# Example scheduled task for automatic cleanup
-$users = @("user1@domain.com", "user2@domain.com")
-foreach ($user in $users) {
-    $env:email = $user.Split('@')[0] + "@company.com"
-    $env:domain = "corp.domain.com" 
-    $env:target = "server01.corp.domain.com"
-    .\RemoteAdmin-checkin.ps1
-}
-```
-
 ## Monitoring and Auditing
 
 ### Windows Event Logs
+
 Monitor these events on target servers:
+
 - **Event ID 4732**: Member added to security-enabled local group
 - **Event ID 4733**: Member removed from security-enabled local group
 - **Event ID 4624**: Successful logon (admin user)
 - **Event ID 4634**: Logoff (admin user)
 
 ### PowerShell Logging
+
 Enable detailed PowerShell logging:
-```powershell
-# Group Policy settings:
-# Computer Configuration > Administrative Templates > Windows Components > Windows PowerShell
-# - Turn on Module Logging
-# - Turn on PowerShell Script Block Logging  
-# - Turn on PowerShell Transcription
-```
+
+   ```powershell
+   # Group Policy settings:
+   # Computer Configuration > Administrative Templates > Windows Components > Windows PowerShell
+   # - Turn on Module Logging
+   # - Turn on PowerShell Script Block Logging  
+   # - Turn on PowerShell Transcription
+   ```
 
 ### Custom Audit Trail
+
 Consider adding custom logging:
+
 ```powershell
 # Example audit logging addition
 $auditLog = "C:\Logs\AdminAccess.log"
@@ -220,6 +216,7 @@ Add-Content -Path $auditLog -Value $entry
 ## Troubleshooting
 
 ### Connection Testing
+
 ```powershell
 # Test basic connectivity
 Test-NetConnection -ComputerName $env:target -Port 5985
@@ -232,6 +229,7 @@ Invoke-Command -ComputerName $env:target -ScriptBlock { Get-ComputerInfo }
 ```
 
 ### User Verification
+
 ```powershell
 # Verify user exists in domain
 Get-ADUser -Filter "UserPrincipalName -eq '$FullUser'" -Server $env:domain
@@ -243,6 +241,7 @@ Invoke-Command -ComputerName $env:target -ScriptBlock {
 ```
 
 ### Permission Verification
+
 ```powershell
 # Check if current user can manage local groups
 Invoke-Command -ComputerName $env:target -ScriptBlock {
