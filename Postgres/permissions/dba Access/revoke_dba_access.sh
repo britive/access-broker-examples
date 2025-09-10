@@ -102,7 +102,7 @@ echo "Revoking DBA access and deleting user $USER_EMAIL ($DB_USER) on $DB_NAME..
 USER_EXISTS=$(psql -d "$DB_NAME" -t -c "SELECT COUNT(*) FROM pg_catalog.pg_roles WHERE rolname = '$DB_USER';" | tr -d " \t\n\r")
 
 if [[ "$USER_EXISTS" == "0" ]]; then
-    echo "✅ User $DB_USER was not found (already removed or never existed)"
+    echo "User $DB_USER was not found (already removed or never existed)"
     exit 0
 fi
 
@@ -115,4 +115,4 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = '${DB_USE
 DROP ROLE IF EXISTS ${DB_USER};
 EOF
 
-echo "✅ Access revoked and user $DB_USER deleted."
+echo "Access revoked and user $DB_USER deleted."
