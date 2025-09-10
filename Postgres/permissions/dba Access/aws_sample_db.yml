@@ -82,17 +82,36 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
+  # Security Group for EC2 instances
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instances accessing RDS
+      VpcId: !Ref DemoVPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          DestinationSecurityGroupId: !Ref RDSSecurityGroup
+          Description: "Allow outbound PostgreSQL connections to RDS"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: "Allow HTTPS for AWS API calls"
+
   # Security Group for RDS
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow PostgreSQL access
+      GroupDescription: Allow PostgreSQL access from VPC only
       VpcId: !Ref DemoVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 5432
           ToPort: 5432
-          CidrIp: 0.0.0.0/0 # Restrict in production
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: "Allow PostgreSQL access from EC2 instances"
 
   # DB Subnet Group
   DBSubnetGroup:
@@ -109,14 +128,36 @@ Resources:
     Properties:
       Name: demo-postgres-secret
       Description: RDS login credentials
-      SecretString: !Sub |
-        {
-          "username": "${DBUsername}",
-          "password": "${DBPassword}",
-          "engine": "postgres",
-          "host": "",
-          "port": 5432
-        }
+      KmsKeyId: !Ref SecretsManagerKey
+      GenerateSecretString:
+        SecretStringTemplate: !Sub |
+          {
+            "username": "${DBUsername}",
+            "engine": "postgres",
+            "port": 5432
+          }
+        GenerateStringKey: "password"
+        ExcludeCharacters: '"@/\'
+        PasswordLength: 32
+
+  # KMS Key for Secrets Manager encryption
+  SecretsManagerKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for Secrets Manager secret encryption
+      KeyPolicy:
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+
+  SecretsManagerKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/demo-secrets-key
+      TargetKeyId: !Ref SecretsManagerKey
 
   # PostgreSQL RDS instance
   PostgresDB:
@@ -126,13 +167,63 @@ Resources:
       AllocatedStorage: 20
       DBInstanceClass: db.t3.micro
       Engine: postgres
+      EngineVersion: "15.4"
       MasterUsername: !Ref DBUsername
       MasterUserPassword: !Ref DBPassword
       DBName: !Ref DBName
       VPCSecurityGroups: [!GetAtt RDSSecurityGroup.GroupId]
       DBSubnetGroupName: !Ref DBSubnetGroup
-      PubliclyAccessible: true
-      BackupRetentionPeriod: 0
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      KmsKeyId: !Ref RDSEncryptionKey
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      DeletionProtection: true
+      EnablePerformanceInsights: true
+      MonitoringInterval: 60
+      MonitoringRoleArn: !GetAtt RDSEnhancedMonitoringRole.Arn
+
+  # KMS Key for RDS encryption
+  RDSEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for RDS encryption
+      KeyPolicy:
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+
+  RDSEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/demo-rds-key
+      TargetKeyId: !Ref RDSEncryptionKey
+
+  # Enhanced monitoring role for RDS
+  RDSEnhancedMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Path: "/"
+
+  # Update secret with RDS endpoint after DB creation
+  SecretTargetAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref RDSSecret
+      TargetId: !Ref PostgresDB
+      TargetType: AWS::RDS::DBInstance
 
   # IAM Role for EC2 to access the secret
   EC2InstanceRole:
@@ -156,6 +247,10 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                 Resource: !Ref RDSSecret
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !GetAtt SecretsManagerKey.Arn
 
   # Instance Profile
   EC2InstanceProfile:
@@ -166,10 +261,43 @@ Resources:
 
 Outputs:
   VPC:
+    Description: VPC ID for the demo environment
     Value: !Ref DemoVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VPC"
+  
   RDSInstanceEndpoint:
+    Description: RDS instance endpoint address
     Value: !GetAtt PostgresDB.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-RDS-Endpoint"
+  
+  RDSInstanceArn:
+    Description: RDS instance ARN
+    Value: !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${PostgresDB}"
+    Export:
+      Name: !Sub "${AWS::StackName}-RDS-ARN"
+  
   SecretName:
+    Description: Name of the Secrets Manager secret containing DB credentials
     Value: !Ref RDSSecret
+    Export:
+      Name: !Sub "${AWS::StackName}-Secret-Name"
+  
+  SecretArn:
+    Description: ARN of the Secrets Manager secret
+    Value: !Ref RDSSecret
+    Export:
+      Name: !Sub "${AWS::StackName}-Secret-ARN"
+  
   EC2Role:
+    Description: IAM role for EC2 instances to access RDS secret
     Value: !Ref EC2InstanceRole
+    Export:
+      Name: !Sub "${AWS::StackName}-EC2-Role"
+  
+  EC2SecurityGroup:
+    Description: Security group for EC2 instances
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-EC2-SecurityGroup"
