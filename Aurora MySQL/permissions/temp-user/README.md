@@ -1,119 +1,203 @@
-# SQL Server Temporary Access Management
+# MySQL Database Access Management Scripts
 
-This repository contains scripts for managing temporary database access in Azure SQL Server environments through automated creation and cleanup of database users carried out with Britive Access Broker.
+This repository contains scripts for managing temporary user accounts in AWS RDS MySQL databases. The scripts provide a secure way to grant and revoke database access using AWS Secrets Manager for credential management.
 
 ## Overview
 
-The solution provides a secure way to grant temporary database access to users by:
+The solution consists of two main scripts:
+- `checkout.sh` - Creates temporary MySQL users with database access
+- `checkin.sh` - Removes temporary MySQL users and cleans up access
 
-- Creating temporary SQL Server logins and database users
-- Assigning appropriate database roles
-- Automatically cleaning up access when no longer needed
+## Files
 
-## Scripts
+### checkout.sh
+Creates a new temporary MySQL user with:
+- Randomly generated 16-character password
+- Full privileges on the `systemdb` database
+- User credentials retrieved from AWS Secrets Manager
 
-### temp_dba_checkout.sh
+### checkin.sh
+Removes the temporary MySQL user and cleans up access permissions.
 
-Creates a temporary database user with full database owner privileges.
+## Prerequisites
 
-**Functionality:**
+### System Requirements
+- Bash shell environment
+- MySQL client tools (`mysql` command)
+- AWS CLI configured with appropriate permissions
+- `jq` command-line JSON processor
+- `/dev/urandom` available for password generation
 
-1. Extracts username from the provided email address
-2. Generates a secure random 12-character password
-3. Creates a SQL Server login in the master database
-4. Creates a corresponding database user in the target database
-5. Assigns the user to the `db_owner` role for full database access
-6. Returns connection string for immediate use
+### AWS Resources Required
+- AWS RDS MySQL database instance
+- AWS Secrets Manager secret containing master database credentials
+- IAM role/user with appropriate permissions (see Permissions section)
 
-### temp_dba_checkin.sh
+## Usage
 
-Removes the temporary database access and cleans up all associated resources.
+### Environment Variables
 
-**Functionality:**
-
-1. Identifies the user to be removed based on email address
-2. Terminates all active sessions for the user
-3. Drops the database user from the target database
-4. Drops the login from the master database
-5. Confirms successful cleanup
-
-## Required Service Account Permissions
-
-The admin service account used by these scripts requires the following minimum permissions:
-
-### Server-Level Permissions (Master Database)
-
-- **ALTER ANY LOGIN** - Required to create and drop SQL Server logins
-- **VIEW SERVER STATE** - Required to query `sys.dm_exec_sessions` for active sessions
-- **ALTER ANY CONNECTION** - Required to kill user sessions using the KILL command
-
-### Database-Level Permissions (Target Database)
-
-- **ALTER ANY USER** - Required to create and drop database users
-- **ALTER ANY ROLE** - Required to add users to database roles (specifically `db_owner`)
-- **VIEW DATABASE STATE** - Required to query system views for user existence checks
-
-### Recommended Service Account Setup
-
-```sql
--- Create service account login
-CREATE LOGIN [temp_access_service] WITH PASSWORD = 'SecurePassword123!';
-
--- Grant server-level permissions
-GRANT ALTER ANY LOGIN TO [temp_access_service];
-GRANT VIEW SERVER STATE TO [temp_access_service];
-GRANT ALTER ANY CONNECTION TO [temp_access_service];
-
--- Grant database-level permissions (run this on each target database)
-USE [YourTargetDatabase];
-CREATE USER [temp_access_service] FOR LOGIN [temp_access_service];
-GRANT ALTER ANY USER TO [temp_access_service];
-GRANT ALTER ANY ROLE TO [temp_access_service];
-GRANT VIEW DATABASE STATE TO [temp_access_service];
-```
-
-## Environment Variables set by Profile checkout
-
-Both scripts require the following environment variables to be configured as part of the Britive Resource profile configuration:
+Both scripts require the following environment variables:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `server_name` | SQL Server instance name | `myserver.database.windows.net` |
-| `database_name` | Target database name | `MyDatabase` |
-| `admin_user` | Service account username | `temp_access_service` |
-| `admin_password` | Service account password | `SecurePassword123!` |
-| `user_email` | Email of user requesting access | `john.doe@company.com` |
+| `user` | Base username (will be sanitized) | `john.doe@company.com` |
+| `host` | MySQL host pattern for user creation | `%` or `10.0.%` |
+| `dburl` | MySQL database endpoint URL | `mydb.cluster-xyz.us-west-2.rds.amazonaws.com` |
+| `secret` | AWS Secrets Manager secret ID | `prod/mysql/master` |
 
-## Security Considerations
+### Checkout (Create User)
 
-### Password Security
+```bash
+export user="john.doe@company.com"
+export host="%"
+export dburl="mydb.cluster-xyz.us-west-2.rds.amazonaws.com"
+export secret="prod/mysql/master"
 
-- Passwords are generated using OpenSSL with 12 characters from a secure character set
-- Passwords include uppercase, lowercase, numbers, and special characters
-- Each checkout generates a unique password
+./checkout.sh
+```
 
-### Access Control
+**Output:**
+```
+johndoe
+Ax7KmP9qR2nV8sL1
+mysql -hmydb.cluster-xyz.us-west-2.rds.amazonaws.com -ujohndoe -p"Ax7KmP9qR2nV8sL1"
+```
 
-- Users are granted `db_owner` role, providing full database access
-- Consider implementing more granular permissions based on use case requirements
-- Access is temporary by design - checkin script removes all traces
+### Checkin (Remove User)
 
-### Session Management
+```bash
+export user="john.doe@company.com"
+export host="%"
+export dburl="mydb.cluster-xyz.us-west-2.rds.amazonaws.com"
+export secret="prod/mysql/master"
 
-- Checkin script properly terminates all active sessions before cleanup
-- Prevents orphaned connections that could cause login deletion failures
+./checkin.sh
+```
+
+## Security Features
+
+### Username Sanitization
+- Removes email domain (`user@domain.com` → `user`)
+- Strips non-alphanumeric characters for MySQL compatibility
+- Prevents SQL injection through username manipulation
+
+### Password Generation
+- 16-character random passwords using `/dev/urandom`
+- Alphanumeric characters only (A-Z, a-z, 0-9)
+- No special characters to avoid shell escaping issues
+
+### Credential Security
+- Master database credentials stored in AWS Secrets Manager
+- Temporary MySQL configuration files with restrictive permissions
+- Automatic cleanup of temporary credential files
+- No credentials stored in environment variables or command history
+
+### Temporary File Handling
+- Random 13-character temporary filenames
+- Files automatically removed after use
+- Configuration files contain sensitive data only temporarily
+
+## Database Permissions
+
+The temporary users are granted:
+```sql
+GRANT ALL ON systemdb.* TO 'username'@'host';
+```
+
+This provides full access to the `systemdb` database only, including:
+- SELECT, INSERT, UPDATE, DELETE
+- CREATE, DROP, ALTER (tables, indexes, etc.)
+- EXECUTE (stored procedures)
+- All other standard database operations on `systemdb`
+
+## AWS Secrets Manager Format
+
+The AWS Secrets Manager secret must contain JSON with the following structure:
+
+```json
+{
+  "username": "admin",
+  "password": "your-master-password"
+}
+```
+
+## Error Handling
+
+Both scripts implement proper error handling:
+- Exit code 0 on success
+- Exit code 1 on failure
+- Automatic cleanup on errors
+- MySQL connection failures are caught and reported
 
 ## Troubleshooting
 
-### Aurora MySQL Issues
+### Common Issues
 
-- **AWS CLI authentication fails**: Verify IAM permissions and AWS credentials configuration
-- **Secrets Manager access denied**: Check IAM policy and secret ARN
-- **MySQL connection fails**: Verify security groups, VPC settings, and endpoint accessibility
-- **User creation fails**: Ensure service account has CREATE USER privileges
-- **Grant failures**: Verify service account has GRANT OPTION on target database
+**MySQL Connection Failures:**
+- Verify database endpoint URL
+- Check security groups allow connections
+- Confirm master credentials in Secrets Manager
 
-## Dependencies
+**Permission Errors:**
+- Ensure AWS CLI is configured correctly
+- Verify IAM permissions (see Permissions section)
+- Check MySQL master user has USER creation privileges
 
-- **OpenSSL**: Used for secure password generation
-- **Bash**: Scripts are written for bash shell environments
+**Script Execution Errors:**
+- Verify all required tools are installed (`mysql`, `aws`, `jq`)
+- Check environment variables are set correctly
+- Ensure scripts have execute permissions (`chmod +x *.sh`)
+
+### Debug Mode
+
+Add debug output by modifying scripts:
+```bash
+set -x  # Add at top of script for verbose output
+```
+
+## Limitations
+
+- Users are created with `ALL` privileges on `systemdb` database only
+- Host pattern must be specified (not automatically detected)
+- Requires MySQL client tools on execution environment
+- Limited to MySQL/MariaDB databases
+
+## Best Practices
+
+1. **Use specific host patterns** when possible instead of `%`
+2. **Rotate Secrets Manager credentials** regularly
+3. **Monitor database user creation/deletion** through CloudTrail
+4. **Use least-privilege IAM policies** for the service account
+5. **Set up alerts** for failed checkout/checkin operations
+6. **Regular cleanup** of any orphaned database users
+
+## Security Considerations
+
+- Scripts should be run in secure environments only
+- Consider using AWS Systems Manager Session Manager for remote execution
+- Implement audit logging for user creation/deletion events
+- Regular review of active database users
+- Consider implementing time-based user expiration
+
+## Integration Examples
+
+### With CI/CD Pipeline
+```yaml
+steps:
+  - name: Checkout DB Access
+    run: |
+      export user="${{ github.actor }}"
+      export host="%"
+      export dburl="${{ secrets.DB_URL }}"
+      export secret="${{ secrets.DB_SECRET }}"
+      ./checkout.sh
+```
+
+### With Monitoring
+```bash
+# Add to checkout.sh for monitoring
+aws cloudwatch put-metric-data \
+  --namespace "Database/Access" \
+  --metric-data MetricName=UserCheckout,Value=1,Unit=Count
+```
