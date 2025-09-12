@@ -20,11 +20,13 @@ The DBA access scripts provide just-in-time access by creating temporary Postgre
 The service account used by these scripts must have the following PostgreSQL privileges:
 
 #### Database Server Level
+
 - `CREATEROLE` - Ability to create and drop database roles/users
 - `LOGIN` - Ability to connect to the database
 - Connection access to the target database
 
 #### Database Level  
+
 - `OWNER` privileges on the target database, OR
 - `GRANT OPTION` on all privileges you want to delegate to temporary users
 
@@ -150,6 +152,7 @@ Temporary DBA users receive the following privileges:
 ## Username Generation
 
 Usernames are generated from email addresses:
+
 - Extract local part (before @)
 - Replace dots and hyphens with underscores
 - Remove special characters

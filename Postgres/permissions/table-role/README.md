@@ -20,13 +20,16 @@ The role-based access scripts provide just-in-time access by granting specific P
 The service account used by these scripts must have the following PostgreSQL privileges:
 
 #### Database Server Level
+
 - `LOGIN` - Ability to connect to the database
 - Connection access to the target database
 - Membership in roles that need to be granted (with `GRANT OPTION`), OR
 - `CREATEROLE` privilege for broader role management
 
 #### Role Management Privileges
+
 For each role you want to manage, the service account needs:
+
 - `GRANT OPTION` on that specific role, OR
 - The role must be granted to the service account `WITH ADMIN OPTION`
 
@@ -120,6 +123,7 @@ role_name=read_only_role \
 ## Role Management Logic
 
 ### Grant Process (checkout)
+
 1. Validates all required environment variables
 2. Sanitizes and validates username from email
 3. Tests database connectivity with service account
@@ -130,6 +134,7 @@ role_name=read_only_role \
 8. Verifies the role grant was successful
 
 ### Revoke Process (checkin)
+
 1. Validates all required environment variables
 2. Sanitizes and validates username from email
 3. Tests database connectivity with service account
@@ -142,6 +147,7 @@ role_name=read_only_role \
 ## Username Generation
 
 Usernames are generated from email addresses:
+
 - Extract local part (before @)
 - Remove all special characters except alphanumeric
 - Example: `john.doe@company.com` → `johndoe`
@@ -242,6 +248,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON specific_table TO app_role;
 ## Integration Notes
 
 These scripts work best as part of a comprehensive access management system:
+
 1. Use DBA/admin scripts to create users
 2. Use role scripts to grant specific permissions
 3. Use role scripts to revoke permissions when access expires
