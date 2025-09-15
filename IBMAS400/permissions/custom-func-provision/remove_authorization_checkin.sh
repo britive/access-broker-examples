@@ -2,9 +2,39 @@
 
 # IBM AS400 Authorization Checkin Script
 # This script removes authorization for a user on IBM AS400 system
-# Required environment variables: BRITIVE_AS400_USER, BRITIVE_USER_AS400_AUTH
+# Required environment variables: BRITIVE_AS400_USER, BRITIVE_USER_AS400_AUTH, BRITIVE_AS400_HOST, BRITIVE_ADMIN_USER
 
 set -euo pipefail  # Enable strict error handling: exit on error, undefined vars, pipe failures
+
+# Consolidated validation function
+validate_environment() {
+    local required_vars=("$@")
+    local missing_vars=()
+
+    for var in "${required_vars[@]}"; do
+        if [[ -z "${!var:-}" ]]; then
+            missing_vars+=("$var")
+        fi
+    done
+
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        echo "ERROR: Missing required environment variables: ${missing_vars[*]}" >&2
+        exit 1
+    fi
+}
+
+echo "Starting AS400 authorization checkin process"
+
+# Validate required environment variables
+validate_environment "BRITIVE_AS400_USER" "BRITIVE_USER_AS400_AUTH" "BRITIVE_AS400_HOST" "BRITIVE_ADMIN_USER"
+
+# Assign variables with proper syntax
+USER="$BRITIVE_AS400_USER"
+AUTH="$BRITIVE_USER_AS400_AUTH"
+HOST="$BRITIVE_AS400_HOST"
+ADMN="$BRITIVE_ADMIN_USER"
+SSH_KEY_PATH="${BRITIVE_SSH_KEY_PATH:-/home/britivebroker/.ssh/id-rsa}"
+
 
 # Function to handle script exit
 cleanup() {
@@ -18,25 +48,8 @@ cleanup() {
 # Set up error handling
 trap cleanup EXIT
 
-echo "Starting AS400 authorization checkin process"
-
-# Validate required environment variables
-if [[ -z "${BRITIVE_AS400_USER:-}" ]]; then
-    echo "ERROR: BRITIVE_AS400_USER environment variable is not set" >&2
-    exit 1
-fi
-
-if [[ -z "${BRITIVE_USER_AS400_AUTH:-}" ]]; then
-    echo "ERROR: BRITIVE_USER_AS400_AUTH environment variable is not set" >&2
-    exit 1
-fi
-
-# Assign variables with proper syntax
-USER="$BRITIVE_AS400_USER"
-AUTH="$BRITIVE_USER_AS400_AUTH"
 
 # Validate SSH key exists (use environment variable or default path)
-SSH_KEY_PATH="${BRITIVE_SSH_KEY_PATH:-/home/britivebroker/.ssh/id-rsa}"
 if [[ ! -f "$SSH_KEY_PATH" ]]; then
     echo "ERROR: SSH key not found at $SSH_KEY_PATH" >&2
     exit 1
@@ -55,7 +68,7 @@ if ssh -i "$SSH_KEY_PATH" \
        -o StrictHostKeyChecking=no \
        -o ConnectTimeout=30 \
        -o BatchMode=yes \
-       brtvadm@it4m602r \
+       $ADMN@$HOST \
        "system 'CALL PGM(FOLD/BRTVRMVAUT) PARM(\"$USER\", \"$AUTH\")'"; then
     echo "SUCCESS: Authorization successfully removed for user $USER"
 else
