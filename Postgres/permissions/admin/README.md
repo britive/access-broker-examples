@@ -52,6 +52,41 @@ GRANT CREATE ON SCHEMA public TO britive_admin_service;
 - `psql` (PostgreSQL client)
 - `tr` (text processing utility)
 
+#### Installation Commands
+
+**RHEL/CentOS/Rocky Linux:**
+```bash
+# Install PostgreSQL client (bash and tr are pre-installed)
+sudo dnf install postgresql
+
+# For older RHEL/CentOS versions using yum:
+sudo yum install postgresql
+```
+
+**Ubuntu/Debian:**
+```bash
+# Install PostgreSQL client (bash and tr are pre-installed)
+sudo apt update
+sudo apt install postgresql-client
+```
+
+**Amazon Linux:**
+```bash
+# Amazon Linux 2023/2022
+sudo dnf install postgresql15
+
+# Amazon Linux 2
+sudo yum install postgresql
+```
+
+**Verification:**
+```bash
+# Verify all required utilities are available
+which bash psql tr
+bash --version
+psql --version
+```
+
 ## Usage
 
 ### Granting Admin Access
