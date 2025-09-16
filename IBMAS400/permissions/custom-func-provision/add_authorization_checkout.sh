@@ -68,7 +68,7 @@ if ssh -i "$SSH_KEY_PATH" \
        -o ConnectTimeout=30 \
        -o BatchMode=yes \
        $ADMN@$HOST \
-       "system 'CALL PGM(FOLD/BRTVADDAUT) PARM(\"$USER\", \"$AUTH\")'"; then
+       "system \"CALL PGM(FOLD/BRTVADDAUT) PARM(('$USER') ('$AUTH'))\""; then
     echo "SUCCESS: Authorization successfully added for user $USER"
 else
     echo "ERROR: Failed to add authorization for user $USER" >&2

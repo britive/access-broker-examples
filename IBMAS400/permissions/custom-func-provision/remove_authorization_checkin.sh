@@ -69,7 +69,7 @@ if ssh -i "$SSH_KEY_PATH" \
        -o ConnectTimeout=30 \
        -o BatchMode=yes \
        $ADMN@$HOST \
-       "system 'CALL PGM(FOLD/BRTVRMVAUT) PARM(\"$USER\", \"$AUTH\")'"; then
+       "system \"CALL PGM(FOLD/BRTVRMVAUT) PARM(('$USER') ('$AUTH'))\""; then
     echo "SUCCESS: Authorization successfully removed for user $USER"
 else
     echo "ERROR: Failed to remove authorization for user $USER" >&2
