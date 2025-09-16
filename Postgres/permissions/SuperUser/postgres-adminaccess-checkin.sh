@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # Validate required environment variables
-for var in BRITIVE_USER svc_user svc_password host db_name; do
+for var in BRITIVE_USER svc_user svc_password db_host db_name; do
     [[ -z "${!var:-}" ]] && { echo "ERROR: '$var' environment variable is required" >&2; exit 1; }
 done
 
@@ -21,7 +21,7 @@ PS_USER=${PS_USER//[^a-zA-Z0-9]/}  # Remove special characters
 # Set service account credentials
 SVC_USER=${svc_user}
 SVC_PASS=${svc_password}
-DB_HOST=${host}
+DB_HOST=${db_host}
 DB_NAME=${db_name}
 
 # Validate inputs and check tools
