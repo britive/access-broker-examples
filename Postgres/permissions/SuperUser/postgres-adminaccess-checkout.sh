@@ -23,15 +23,15 @@ cleanup_on_error() {
 trap cleanup_on_error ERR
 
 # Validate required environment variables
-for var in user svc_user svc_password db_host db_name; do
+for var in BRITIVE_USER svc_user svc_password db_host db_name; do
     [[ -z "${!var:-}" ]] && { echo "ERROR: '$var' environment variable is required" >&2; exit 1; }
 done
 
 # Extract and sanitize username from email
-PS_USER=${user%%@*}           # Remove domain part
+PS_USER=${BRITIVE_USER%%@*}           # Remove domain part
 PS_USER=${PS_USER//[^a-zA-Z0-9]/}  # Remove special characters
 [[ -z "$PS_USER" || ! "$PS_USER" =~ ^[a-zA-Z][a-zA-Z0-9]*$ ]] && {
-    echo "ERROR: Invalid username generated from: $user" >&2; exit 1; }
+    echo "ERROR: Invalid username generated from: $BRITIVE_USER" >&2; exit 1; }
 
 # Set service account credentials
 SVC_USER=${svc_user}
@@ -46,7 +46,7 @@ for tool in psql tr; do
 done
 
 # Generate secure temporary password
-PS_PASS=$(tr -dc 'A-Za-z0-9!?%=' < /dev/urandom | head -c 16 2>/dev/null)
+PS_PASS=$(head -c 32 /dev/urandom | tr -dc 'A-Za-z0-9!?%=' | head -c 16)
 [[ -z "$PS_PASS" ]] && { echo "ERROR: Failed to generate password" >&2; exit 1; }
 
 # Test database connectivity with service account
@@ -88,9 +88,9 @@ if ! psql -U "${SVC_USER}" -p 5432 -h "${DB_HOST}" -d "${DB_NAME}" -c "SELECT 1 
 fi
 
 # Grant admin privileges on the database
-echo "Granting admin privileges to user: $PS_USER"
-if ! psql -U "${SVC_USER}" -p 5432 -h "${DB_HOST}" -d "${DB_NAME}" -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${PS_USER};"; then
-    echo "ERROR: Failed to grant privileges to user $PS_USER" >&2
+echo "Granting SUPERUSER privileges to user: $PS_USER"
+if ! psql -U "${SVC_USER}" -p 5432 -h "${DB_HOST}" -d "${DB_NAME}" -c "ALTER USER ${PS_USER} WITH SUPERUSER;"; then
+    echo "ERROR: Failed to grant SUPERUSER privileges to user $PS_USER" >&2
     exit 1
 fi
 
