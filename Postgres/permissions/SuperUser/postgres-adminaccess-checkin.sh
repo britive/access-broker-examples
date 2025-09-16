@@ -8,15 +8,15 @@
 set -euo pipefail
 
 # Validate required environment variables
-for var in user svc_user svc_password host db_name; do
+for var in BRITIVE_USER svc_user svc_password host db_name; do
     [[ -z "${!var:-}" ]] && { echo "ERROR: '$var' environment variable is required" >&2; exit 1; }
 done
 
 # Extract and sanitize username from email
-PS_USER=${user%%@*}           # Remove domain part
+PS_USER=${BRITIVE_USER%%@*}           # Remove domain part
 PS_USER=${PS_USER//[^a-zA-Z0-9]/}  # Remove special characters
 [[ -z "$PS_USER" || ! "$PS_USER" =~ ^[a-zA-Z][a-zA-Z0-9]*$ ]] && {
-    echo "ERROR: Invalid username generated from: $user" >&2; exit 1; }
+    echo "ERROR: Invalid username generated from: $BRITIVE_USER" >&2; exit 1; }
 
 # Set service account credentials
 SVC_USER=${svc_user}

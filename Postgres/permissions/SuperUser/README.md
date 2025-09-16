@@ -25,25 +25,20 @@ The service account used by these scripts must have the following PostgreSQL pri
 - `LOGIN` - Ability to connect to the database
 - Connection access to the target database
 
-#### Database Level  
+#### Database Level
 
-- `OWNER` privileges on the target database, OR
-- `GRANT OPTION` on all privileges you want to delegate to temporary users
+- `SUPERUSER` privileges (required to grant SUPERUSER to temporary users)
 
 #### Sample Service Account Creation
 ```sql
 -- Connect as a superuser (e.g., postgres)
-CREATE USER britive_admin_service WITH 
-    LOGIN 
-    CREATEROLE 
+CREATE USER britive_admin_service WITH
+    LOGIN
+    CREATEROLE
+    SUPERUSER
     PASSWORD 'secure_random_password';
 
--- Grant database ownership or specific privileges
-GRANT ALL PRIVILEGES ON DATABASE your_database TO britive_admin_service WITH GRANT OPTION;
-
--- Allow the service account to manage users
-GRANT USAGE ON SCHEMA public TO britive_admin_service;
-GRANT CREATE ON SCHEMA public TO britive_admin_service;
+-- No additional grants needed - SUPERUSER has all privileges
 ```
 
 ### System Requirements
@@ -136,11 +131,12 @@ db_name=production_db \
 
 Temporary admin users receive the following privileges:
 
-- `ALL PRIVILEGES ON DATABASE` - Full database access including:
-  - `CONNECT` - Ability to connect to the database
-  - `CREATE` - Ability to create schemas and objects
-  - `TEMPORARY` - Ability to create temporary tables
-  - All schema-level privileges within the database
+- `SUPERUSER` - Full PostgreSQL superuser privileges including:
+  - Complete database server administration capabilities
+  - Ability to create/drop databases and roles
+  - Bypass all permission checks
+  - Access to system catalogs and configuration
+  - All database and schema-level operations
 
 ## Username Generation
 
@@ -156,14 +152,14 @@ Usernames are generated from email addresses:
 
 - Creates or recreates PostgreSQL user
 - Generates secure 16-character password
-- Grants full database privileges
+- Grants SUPERUSER privileges
 - Tests connection to verify user creation
 - Provides connection details for immediate use
 
 ### postgres-adminaccess-checkin.sh
 
 - Checks if user exists before attempting cleanup
-- Revokes all database privileges
+- Revokes SUPERUSER privileges
 - Terminates active user sessions
 - Drops the user completely
 - Verifies successful cleanup
@@ -183,9 +179,9 @@ Usernames are generated from email addresses:
    - Check if username already exists (script will recreate)
    - Ensure database name is valid
 
-3. **"Failed to grant privileges"**
-   - Verify service account has GRANT OPTION on target database
-   - Check database ownership or privilege delegation
+3. **"Failed to grant SUPERUSER privileges"**
+   - Verify service account has SUPERUSER privileges (only SUPERUSER can grant SUPERUSER)
+   - Check service account permissions on the database server
    - Ensure database exists and is accessible
 
 4. **"Failed to verify new user connection"**
@@ -205,7 +201,7 @@ set -x  # Add this line for debug output
 
 1. **Password Security**: Generated passwords are 16 characters with mixed complexity
 2. **Session Cleanup**: Active sessions are terminated before user deletion
-3. **Privilege Isolation**: Users only get database-level privileges, not server-level
+3. **Complete Access**: Users receive SUPERUSER privileges with full server access
 4. **Audit Trail**: All database operations are logged by PostgreSQL
 5. **Temporary Access**: Users are designed to be short-lived
 
@@ -232,7 +228,7 @@ These scripts are designed to work with access management platforms but can be a
 
 ## Differences from DBA Access
 
-- **Scope**: Database-level privileges only (not server-level DBA privileges)
+- **Scope**: SUPERUSER privileges (equivalent to server-level DBA privileges)
 - **Credential Management**: Uses direct environment variables instead of AWS Secrets Manager
 - **User Management**: Simpler user lifecycle without advanced role management
 - **Dependencies**: Fewer external dependencies (no AWS CLI, jq, or openssl required)
