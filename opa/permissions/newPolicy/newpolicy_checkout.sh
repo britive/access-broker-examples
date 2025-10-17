@@ -1,3 +1,4 @@
+#!/bin/bash
 
 echo "Checkout request processed for '$user' for '$host' with Role: '$role'. TransactionId: '$tid'" # Optional
 
