@@ -25,9 +25,10 @@ Connects to Active Directory, retrieves all user and group objects along with di
 
 #### Identity Resolution
 
-- **User `id`** and **group `id`** fields use the full `DistinguishedName` (e.g., `CN=jdoe,OU=Users,DC=contoso,DC=com`) for globally unique identification.
-- **Group `members`** arrays contain user `DistinguishedName` values, matching the identity `id` field so that `attribute_resolution.group_membership = "id"` resolves correctly.
-- `SamAccountName` and `UserPrincipalName` are included as attributes for reference.
+- **User `id`** uses `SamAccountName` (e.g., `jdoe`). Short values that fit within database column limits.
+- **Group `id`** uses the group `Name`.
+- **Group `members`** arrays contain user `SamAccountName` values, matching the identity `id` field so that `attribute_resolution.group_membership = "id"` resolves correctly.
+- `DistinguishedName` and `UserPrincipalName` are stored in `attributes` for reference.
 
 #### Output Schema
 

@@ -8,9 +8,10 @@
 # Required env var:
 #   BROKER_INJECTED_SCAN_OUTPUT_PATH  – full path for the JSON output file
 #
-# Identity IDs use DistinguishedName for uniqueness.
-# Group member lists reference user DistinguishedNames so that
+# Identity IDs use SamAccountName (short, fits native_id column limits).
+# Group member lists reference user SamAccountNames so that
 # attribute_resolution.group_membership = "id" resolves correctly.
+# DistinguishedName and UPN are stored in attributes for reference.
 # ============================================================
 
 try {
@@ -68,17 +69,17 @@ try {
     $adUsers = Get-ADUser -Filter * -Properties Mail, GivenName, Surname, UserPrincipalName, Enabled
 
     foreach ($user in $adUsers) {
-        # Use DistinguishedName as the unique identity ID
-        $userDN = $user.DistinguishedName
+        # Use SamAccountName as the identity ID (fits native_id column limits)
+        $uid = $user.SamAccountName
 
         # Fall back to placeholder values when optional attributes are empty
-        $email     = if ($user.Mail)      { $user.Mail }      else { "$($user.SamAccountName)@placeholder.local" }
+        $email     = if ($user.Mail)      { $user.Mail }      else { "$uid@placeholder.local" }
         $firstName = if ($user.GivenName) { $user.GivenName } else { "NA" }
         $lastName  = if ($user.Surname)   { $user.Surname }   else { "NA" }
 
         $identities += @{
-            id          = $userDN
-            name        = $user.SamAccountName
+            id          = $uid
+            name        = $uid
             type        = "User"
             description = "Active Directory user"
             created_on  = $now
@@ -87,9 +88,9 @@ try {
                 email                = $email
                 first_name           = $firstName
                 last_name            = $lastName
-                samaccountname       = $user.SamAccountName
+                samaccountname       = $uid
                 user_principal_name  = if ($user.UserPrincipalName) { $user.UserPrincipalName } else { "" }
-                distinguished_name   = $userDN
+                distinguished_name   = $user.DistinguishedName
             }
         }
     }
@@ -104,25 +105,26 @@ try {
     $adGroups = Get-ADGroup -Filter * -Properties DistinguishedName
 
     foreach ($group in $adGroups) {
-        $groupDN = $group.DistinguishedName
+        $groupName = $group.Name
         $members = @()
 
         # Get direct group members (not recursive) to avoid issues with
         # circular nesting and token-size limits in large environments.
         # Only include user objects; nested groups are excluded.
+        # Members stored as SamAccountName to match identity id values.
         try {
             Get-ADGroupMember -Identity $group.ObjectGUID -ErrorAction SilentlyContinue |
                 Where-Object { $_.objectClass -eq "user" } |
-                ForEach-Object { $members += $_.DistinguishedName }
+                ForEach-Object { $members += $_.SamAccountName }
         }
         catch {
             # Some built-in/protected groups may deny read access
-            Write-Host "Warning: Could not enumerate members for group: $($group.Name)"
+            Write-Host "Warning: Could not enumerate members for group: $groupName"
         }
 
         $groups += @{
-            id          = $groupDN
-            name        = $group.Name
+            id          = $groupName
+            name        = $groupName
             type        = "User group"
             description = "Active Directory group"
             created_on  = $now
@@ -130,7 +132,7 @@ try {
             members     = $members
             attributes  = @{
                 samaccountname     = $group.SamAccountName
-                distinguished_name = $groupDN
+                distinguished_name = $group.DistinguishedName
             }
         }
     }
@@ -154,7 +156,7 @@ try {
             scan_details  = "AD scan completed. Users: $($identities.Count), Groups: $($groups.Count)"
             scan_errors   = ""
             attribute_resolution = @{
-                group_membership   = "id"   # groups.members values match identity.id (DistinguishedName)
+                group_membership   = "id"   # groups.members values match identity.id (SamAccountName)
                 permission_mapping = "id"
             }
         }
