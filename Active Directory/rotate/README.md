@@ -89,3 +89,54 @@ Extends the basic password rotation to also update the logon credential on a Win
 - The broker service account must have permission to reset passwords for the target accounts
 - WinRM/PSRemoting must be enabled on the target server
 - The broker service account must have remote admin access on the target server
+
+---
+
+### Script: `rotate-ad-iis-account.ps1`
+
+Extends the basic password rotation to also update the identity credential on an IIS Application Pool running on a remote server via PSRemoting (WinRM), and optionally recycles the app pool so the new password takes effect immediately.
+
+#### Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `AD_TARGET_USER` | Yes | | SamAccountName of the service account (e.g., `svc-webapp01`) |
+| `AD_NEW_PASSWORD` | Yes | | The new password to set on the account |
+| `AD_TARGET_SERVER` | Yes | | Hostname or FQDN of the IIS server |
+| `AD_APPPOOL_NAME` | Yes | | Name of the IIS Application Pool to update (e.g., `DefaultAppPool`) |
+| `AD_RECYCLE_APPPOOL` | No | `true` | Set to `false` to skip recycling the app pool after credential update |
+
+#### How It Works
+
+1. Validates all required environment variables (fails immediately if any are missing).
+2. Imports the `ActiveDirectory` PowerShell module.
+3. Confirms the target user exists in AD and retrieves the domain NetBIOS name for the `DOMAIN\username` format.
+4. Rotates the AD password, unlocks the account, and disables change-at-logon.
+5. Connects to the remote IIS server via `Invoke-Command` (PSRemoting/WinRM).
+6. Imports the `WebAdministration` module on the remote server.
+7. Verifies the target app pool exists.
+8. Updates the app pool identity: sets `identityType` to SpecificUser, and updates `userName` and `password`.
+9. Optionally recycles the app pool using `Restart-WebAppPool`.
+10. Verifies the app pool is running after recycle.
+
+#### Fail-Fast Behavior
+
+- `$ErrorActionPreference = 'Stop'` is set both locally and inside the remote session.
+- All four required environment variables are validated before any AD or remote operations run.
+- The target user is verified with `Get-ADUser` before the password reset.
+- The app pool is verified with `Get-Item` on the `IIS:\AppPools\` path before updating credentials.
+- App pool state is checked after recycle to confirm it restarted successfully.
+
+#### Security Notes
+
+- The password is never written to stdout or logs.
+- The password is passed to the remote session via `-ArgumentList`, not embedded in the script block.
+
+#### Prerequisites
+
+- Windows PowerShell 5.1 or later
+- RSAT Active Directory module installed (see [parent README](../README.md) for installation instructions)
+- The broker service account must have permission to reset passwords for the target accounts
+- WinRM/PSRemoting must be enabled on the target IIS server
+- The broker service account must have remote admin access on the target IIS server
+- The `WebAdministration` PowerShell module must be installed on the target IIS server
