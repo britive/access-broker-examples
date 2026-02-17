@@ -15,9 +15,9 @@
 #   4. Configures the service to run under the AD account
 #   5. Starts the service and outputs configuration for reference
 #
-# The demo service uses PowerShell as its executable with a
-# simple sleep loop — it does nothing useful but provides a
-# real Windows service to test credential rotation against.
+# The demo service is a minimal C# executable compiled inline
+# that implements the Windows SCM interface. It does nothing
+# useful but provides a real service to test credential rotation.
 #
 # Prerequisites:
 #   - Windows Server 2022 (domain-joined)
@@ -35,7 +35,7 @@ $ServiceAccountPassword = "P@ssw0rd!Demo2024"     # Initial password (will be ro
 $ServiceName = "BritiveDemoService"               # Windows service name
 $ServiceDisplayName = "Britive Demo Service"      # Friendly display name
 $ServiceDescription = "Demo service for testing Britive broker password rotation"
-$ServiceScriptPath = "C:\BritiveDemo\service.ps1" # Path for the service script
+$ServiceExePath = "C:\BritiveDemo\BritiveDemoService.exe" # Path for the compiled service binary
 
 Write-Host "============================================"
 Write-Host " Windows Service Demo Setup"
@@ -125,35 +125,76 @@ try {
     Write-Host "  'Log on as a service' right granted to $domainAccount."
 
     # ==========================================================
-    # STEP 3: Create the service script
+    # STEP 3: Compile a minimal C# Windows service executable
     # ==========================================================
     Write-Host ""
-    Write-Host "[Step 3] Creating service script..."
+    Write-Host "[Step 3] Compiling demo service executable..."
 
-    # Create the directory for the service script
-    $serviceDir = Split-Path -Path $ServiceScriptPath -Parent
+    # Create the directory for the service binary
+    $serviceDir = Split-Path -Path $ServiceExePath -Parent
     if (-not (Test-Path $serviceDir)) {
         New-Item -ItemType Directory -Path $serviceDir -Force | Out-Null
     }
 
-    # Write a minimal PowerShell script that runs as a service.
-    # This script just loops indefinitely — it's a placeholder
-    # to give us a real service to rotate credentials on.
-    $serviceScript = @'
-# Britive Demo Service Script
-# This script runs as a Windows service and does nothing useful.
-# It exists solely to test password rotation via the broker.
+    # Minimal C# Windows service that implements the SCM interface.
+    # It simply starts, logs a heartbeat to a file, and waits to be stopped.
+    # This is the minimum needed for a valid Windows service binary.
+    $serviceSource = @'
+using System;
+using System.IO;
+using System.ServiceProcess;
+using System.Timers;
 
-$logFile = "C:\BritiveDemo\service.log"
+public class BritiveDemoService : ServiceBase
+{
+    private Timer _timer;
+    private string _logFile = @"C:\BritiveDemo\service.log";
 
-while ($true) {
-    $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    "$timestamp - Demo service is running as: $($env:USERNAME)" | Out-File $logFile -Append
-    Start-Sleep -Seconds 60
+    public BritiveDemoService()
+    {
+        ServiceName = "BritiveDemoService";
+    }
+
+    protected override void OnStart(string[] args)
+    {
+        Log("Service started as: " + Environment.UserName);
+        _timer = new Timer(60000);
+        _timer.Elapsed += (s, e) => Log("Heartbeat - running as: " + Environment.UserName);
+        _timer.Start();
+    }
+
+    protected override void OnStop()
+    {
+        if (_timer != null) _timer.Stop();
+        Log("Service stopped.");
+    }
+
+    private void Log(string message)
+    {
+        try
+        {
+            File.AppendAllText(_logFile,
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " - " + message + Environment.NewLine);
+        }
+        catch { }
+    }
+
+    public static void Main()
+    {
+        ServiceBase.Run(new BritiveDemoService());
+    }
 }
 '@
-    $serviceScript | Out-File $ServiceScriptPath -Encoding utf8 -Force
-    Write-Host "  Service script created: $ServiceScriptPath"
+
+    # Compile the C# source into a Windows service executable
+    # using the .NET Framework compiler built into Windows
+    Add-Type -TypeDefinition $serviceSource `
+        -ReferencedAssemblies "System.ServiceProcess" `
+        -OutputAssembly $ServiceExePath `
+        -OutputType ConsoleApplication `
+        -ErrorAction Stop
+
+    Write-Host "  Service binary compiled: $ServiceExePath"
 
     # ==========================================================
     # STEP 4: Create and configure the Windows service
@@ -175,14 +216,8 @@ while ($true) {
         Write-Host "  Removed existing service."
     }
 
-    # The service binary is PowerShell executing our script.
-    # We use NSSM (Non-Sucking Service Manager) pattern with sc.exe.
-    # For a real demo, we use PowerShell's ability to run as a service
-    # via a wrapper that sc.exe can manage.
-    $binPath = "powershell.exe -ExecutionPolicy Bypass -NoProfile -File `"$ServiceScriptPath`""
-
-    # Create the service using sc.exe
-    $createResult = & sc.exe create $ServiceName binPath= $binPath start= demand DisplayName= $ServiceDisplayName 2>&1
+    # Create the service using sc.exe with the compiled binary
+    $createResult = & sc.exe create $ServiceName binPath= $ServiceExePath start= demand DisplayName= $ServiceDisplayName 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to create service (exit code $LASTEXITCODE): $createResult"
     }
@@ -223,6 +258,7 @@ while ($true) {
     Write-Host "  Display Name : $ServiceDisplayName"
     Write-Host "  Status       : $($svc.Status)"
     Write-Host "  Identity     : $domainAccount"
+    Write-Host "  Binary       : $ServiceExePath"
     Write-Host "  Log file     : C:\BritiveDemo\service.log"
     Write-Host ""
     Write-Host "Service Account:"
