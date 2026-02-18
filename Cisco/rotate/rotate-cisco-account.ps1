@@ -97,7 +97,10 @@ function Invoke-CiscoPasswordRotation {
 
         # ── Exit configuration mode ──────────────────────────────────────────
         $stream.WriteLine("end")
-        $stream.Expect('#', [TimeSpan]::FromSeconds(5)) | Out-Null
+        $endOutput = $stream.Expect('#', [TimeSpan]::FromSeconds(5))
+        if (-not $endOutput) {
+            throw "Timed out waiting for privileged EXEC prompt after 'end' on $SwitchHost."
+        }
 
         # ── Persist to NVRAM ─────────────────────────────────────────────────
         Write-Host "  Saving configuration to NVRAM..."

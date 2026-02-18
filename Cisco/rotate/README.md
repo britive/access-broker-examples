@@ -170,4 +170,44 @@ resource_types:
           - CISCO_PRIVILEGE_LEVEL    # optional
 ```
 
-For multi-switch rotation, replace the single-switch script with the corresponding `*-multi` variant and use `CISCO_SWITCH_HOSTS` (comma-separated) in place of `CISCO_SWITCH_HOST`.
+### Multiple Switches — PowerShell
+
+```yaml
+resource_types:
+  - name: cisco-switch
+    permissions:
+      - name: rotate-local-account
+        checkout_script: Cisco/rotate/rotate-cisco-account-multi.ps1
+        checkin_script:  Cisco/rotate/rotate-cisco-account-multi.ps1
+        execution_environment: powershell
+        environment_variables:
+          - CISCO_SWITCH_HOSTS        # comma-separated, e.g. "10.0.1.1,10.0.1.2,sw-core-01"
+          - CISCO_ADMIN_USER
+          - CISCO_ADMIN_PASSWORD
+          - CISCO_TARGET_USER
+          - CISCO_NEW_PASSWORD
+          - CISCO_ENABLE_SECRET      # optional
+          - CISCO_PRIVILEGE_LEVEL    # optional
+```
+
+### Multiple Switches — Bash
+
+```yaml
+resource_types:
+  - name: cisco-switch
+    permissions:
+      - name: rotate-local-account
+        checkout_script: Cisco/rotate/rotate-cisco-account-multi.sh
+        checkin_script:  Cisco/rotate/rotate-cisco-account-multi.sh
+        execution_environment: bash
+        environment_variables:
+          - CISCO_SWITCH_HOSTS        # comma-separated, e.g. "10.0.1.1,10.0.1.2,sw-core-01"
+          - CISCO_ADMIN_USER
+          - CISCO_ADMIN_PASSWORD
+          - CISCO_TARGET_USER
+          - CISCO_NEW_PASSWORD
+          - CISCO_ENABLE_SECRET      # optional
+          - CISCO_PRIVILEGE_LEVEL    # optional
+```
+
+> **Note:** The key difference from single-switch configs is the variable name: `CISCO_SWITCH_HOSTS` (plural, comma-separated list) instead of `CISCO_SWITCH_HOST` (singular).
