@@ -26,7 +26,7 @@ function Invoke-CiscoPrivilegeCheckin {
     param (
         [string]$SwitchHost,
         [string]$AdminUser,
-        [string]$AdminPassword,
+        [SecureString]$AdminPassword,
         [string]$TargetUser,
         [string]$EnableSecret
     )
@@ -36,8 +36,7 @@ function Invoke-CiscoPrivilegeCheckin {
     try {
         Write-Host "  Connecting to $SwitchHost via SSH..."
 
-        $SecureAdminPass = ConvertTo-SecureString $AdminPassword -AsPlainText -Force
-        $Credential = New-Object System.Management.Automation.PSCredential($AdminUser, $SecureAdminPass)
+        $Credential = New-Object System.Management.Automation.PSCredential($AdminUser, $AdminPassword)
 
         $sshSession = New-SSHSession `
             -ComputerName $SwitchHost `
@@ -49,6 +48,11 @@ function Invoke-CiscoPrivilegeCheckin {
         Write-Host "  SSH session established (SessionId: $($sshSession.SessionId))."
 
         $stream = New-SSHShellStream -SessionId $sshSession.SessionId -ErrorAction Stop
+
+        # Allow the switch time to send its MOTD banner and initial prompt
+        # before Expect starts reading; without this pause the buffer may be
+        # empty and the 15-second wait times out before any data arrives.
+        Start-Sleep -Milliseconds 1000
 
         # ── Wait for the initial exec prompt (> or #) ──────────────────────
         $output = $stream.Expect('[>#]', [TimeSpan]::FromSeconds(15))
@@ -93,7 +97,10 @@ function Invoke-CiscoPrivilegeCheckin {
 
         # ── Exit configuration mode ──────────────────────────────────────────
         $stream.WriteLine("end")
-        $stream.Expect('#', [TimeSpan]::FromSeconds(5)) | Out-Null
+        $endOutput = $stream.Expect('#', [TimeSpan]::FromSeconds(5))
+        if (-not $endOutput) {
+            throw "Timed out waiting for privileged EXEC prompt after 'end' on $SwitchHost."
+        }
 
         # ── Persist to NVRAM ─────────────────────────────────────────────────
         Write-Host "  Saving configuration to NVRAM..."
@@ -128,7 +135,7 @@ try {
 
     $SwitchHost    = $env:CISCO_SWITCH_HOST
     $AdminUser     = $env:CISCO_ADMIN_USER
-    $AdminPassword = $env:CISCO_ADMIN_PASSWORD
+    $AdminPassword = ConvertTo-SecureString $env:CISCO_ADMIN_PASSWORD -AsPlainText -Force
     $TargetUser    = $env:CISCO_TARGET_USER
     $EnableSecret  = $env:CISCO_ENABLE_SECRET    # optional
 

@@ -27,9 +27,9 @@ function Invoke-CiscoSecretRotation {
     param (
         [string]$SwitchHost,
         [string]$AdminUser,
-        [string]$AdminPassword,
+        [SecureString]$AdminPassword,
         [string]$TargetUser,
-        [string]$NewPassword,
+        [SecureString]$NewPassword,
         [string]$EnableSecret
     )
 
@@ -38,8 +38,7 @@ function Invoke-CiscoSecretRotation {
     try {
         Write-Host "  Connecting to $SwitchHost via SSH..."
 
-        $SecureAdminPass = ConvertTo-SecureString $AdminPassword -AsPlainText -Force
-        $Credential = New-Object System.Management.Automation.PSCredential($AdminUser, $SecureAdminPass)
+        $Credential = New-Object System.Management.Automation.PSCredential($AdminUser, $AdminPassword)
 
         $sshSession = New-SSHSession `
             -ComputerName $SwitchHost `
@@ -51,6 +50,11 @@ function Invoke-CiscoSecretRotation {
         Write-Host "  SSH session established (SessionId: $($sshSession.SessionId))."
 
         $stream = New-SSHShellStream -SessionId $sshSession.SessionId -ErrorAction Stop
+
+        # Allow the switch time to send its MOTD banner and initial prompt
+        # before Expect starts reading; without this pause the buffer may be
+        # empty and the 15-second wait times out before any data arrives.
+        Start-Sleep -Milliseconds 1000
 
         # ── Wait for the initial exec prompt (> or #) ──────────────────────
         $output = $stream.Expect('[>#]', [TimeSpan]::FromSeconds(15))
@@ -88,8 +92,12 @@ function Invoke-CiscoSecretRotation {
         # ── Rotate the secret (scrypt / type-9 hash – IOS XE 16.x+) ────────
         # Omitting the 'privilege' keyword updates only the stored secret hash;
         # the account's existing privilege level is preserved unchanged.
+        # Decrypt SecureString only at the point of use inside the encrypted SSH session.
         Write-Host "  Setting new secret for user: $TargetUser"
-        $stream.WriteLine("username $TargetUser algorithm-type scrypt secret $NewPassword")
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($NewPassword)
+        $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        $stream.WriteLine("username $TargetUser algorithm-type scrypt secret $plainPassword")
         $setCmdOutput = $stream.Expect('\(config\)#', [TimeSpan]::FromSeconds(10))
         if (-not $setCmdOutput) {
             throw "Timed out waiting for config prompt after setting secret on $SwitchHost."
@@ -136,9 +144,9 @@ try {
 
     $SwitchHost    = $env:CISCO_SWITCH_HOST
     $AdminUser     = $env:CISCO_ADMIN_USER
-    $AdminPassword = $env:CISCO_ADMIN_PASSWORD
+    $AdminPassword = ConvertTo-SecureString $env:CISCO_ADMIN_PASSWORD -AsPlainText -Force
     $TargetUser    = $env:CISCO_TARGET_USER
-    $NewPassword   = $env:CISCO_NEW_PASSWORD
+    $NewPassword   = ConvertTo-SecureString $env:CISCO_NEW_PASSWORD   -AsPlainText -Force
     $EnableSecret  = $env:CISCO_ENABLE_SECRET    # optional
 
     Write-Host "Starting Cisco IOS XE secret rotation."
