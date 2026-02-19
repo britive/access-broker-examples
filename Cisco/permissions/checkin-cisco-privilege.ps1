@@ -94,7 +94,7 @@ function Invoke-CiscoPrivilegeCheckin {
         # ── Enter global configuration mode ─────────────────────────────────
         Write-Host "  Entering global configuration mode..."
         $stream.WriteLine("configure terminal")
-        $configOutput = $stream.Expect('\(config\)#', [TimeSpan]::FromSeconds(10))
+        $configOutput = $stream.Expect('(config)', [TimeSpan]::FromSeconds(10))
         if (-not $configOutput) {
             throw "Failed to enter global configuration mode on $SwitchHost."
         }
@@ -102,7 +102,7 @@ function Invoke-CiscoPrivilegeCheckin {
         # ── Remove the user account ──────────────────────────────────────────
         Write-Host "  Removing user '$TargetUser'..."
         $stream.WriteLine("no username $TargetUser")
-        $removeCmdOutput = $stream.Expect('\(config\)#', [TimeSpan]::FromSeconds(10))
+        $removeCmdOutput = $stream.Expect('(config)', [TimeSpan]::FromSeconds(10))
         if (-not $removeCmdOutput) {
             throw "Timed out waiting for config prompt after removing user on $SwitchHost."
         }
@@ -117,7 +117,7 @@ function Invoke-CiscoPrivilegeCheckin {
         # ── Persist to NVRAM ─────────────────────────────────────────────────
         Write-Host "  Saving configuration to NVRAM..."
         $stream.WriteLine("write memory")
-        $saveOutput = $stream.Expect('\[OK\]|Building configuration|Copy in progress', [TimeSpan]::FromSeconds(30))
+        $saveOutput = $stream.Expect('Building configuration', [TimeSpan]::FromSeconds(30))
         if (-not $saveOutput) {
             throw "Timed out waiting for 'write memory' to complete on $SwitchHost."
         }
