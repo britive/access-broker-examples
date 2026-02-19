@@ -10,10 +10,12 @@ Two language variants are provided — PowerShell and Bash — so you can choose
 
 | Script | Language | Purpose |
 |---|---|---|
-| `rotate-cisco-account.ps1` | PowerShell | Rotate a local user's password on a **single** switch |
-| `rotate-cisco-account-multi.ps1` | PowerShell | Rotate a local user's password across a **group** of switches |
-| `rotate-cisco-account.sh` | Bash | Rotate a local user's password on a **single** switch |
-| `rotate-cisco-account-multi.sh` | Bash | Rotate a local user's password across a **group** of switches |
+| `rotate-cisco-secret.ps1` | PowerShell | Rotate a local user's secret on a **single** switch, preserving their privilege level |
+| `rotate-cisco-secret.sh` | Bash | Rotate a local user's secret on a **single** switch, preserving their privilege level |
+| `rotate-cisco-account.ps1` | PowerShell | Rotate a local user's password **and** set their privilege level on a **single** switch |
+| `rotate-cisco-account-multi.ps1` | PowerShell | Rotate a local user's password and privilege level across a **group** of switches |
+| `rotate-cisco-account.sh` | Bash | Rotate a local user's password **and** set their privilege level on a **single** switch |
+| `rotate-cisco-account-multi.sh` | Bash | Rotate a local user's password and privilege level across a **group** of switches |
 
 ---
 
@@ -42,9 +44,91 @@ Two language variants are provided — PowerShell and Bash — so you can choose
 
 ---
 
+## rotate-cisco-secret.ps1 / rotate-cisco-secret.sh — Single Switch, Secret Only
+
+Connects to one switch via SSH and rotates the stored secret (password hash) for a specified local user **without touching the account's privilege level**. Use this when you only need to refresh the credential and want to guarantee the account's privilege assignment is never altered.
+
+The IOS XE command issued is:
+
+```
+username <CISCO_TARGET_USER> algorithm-type scrypt secret <CISCO_NEW_PASSWORD>
+```
+
+Omitting the `privilege` keyword causes IOS XE to update only the stored secret hash; the account's existing privilege level is preserved.
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `CISCO_SWITCH_HOST` | Yes | IP address or hostname of the target switch |
+| `CISCO_ADMIN_USER` | Yes | Admin username used for the SSH connection |
+| `CISCO_ADMIN_PASSWORD` | Yes | Admin password for the SSH connection |
+| `CISCO_TARGET_USER` | Yes | Local username whose secret will be rotated |
+| `CISCO_NEW_PASSWORD` | Yes | The new secret to set |
+| `CISCO_ENABLE_SECRET` | No | Enable mode secret — only needed if the admin account is not privilege 15 |
+
+### How It Works
+
+1. Validates all required environment variables — fails immediately if any are missing.
+2. Checks that the required SSH library is available (`Posh-SSH` for PowerShell; `expect` + `ssh` for Bash).
+3. Opens an interactive SSH shell to the switch.
+4. Reads the initial prompt:
+   - If the prompt ends with `>` (user EXEC), sends `enable` and the enable secret to reach privileged EXEC (`#`).
+   - If the prompt already ends with `#` (privilege 15), skips the enable step.
+5. Enters global configuration mode with `configure terminal`.
+6. Updates only the stored secret:
+   ```
+   username <CISCO_TARGET_USER> algorithm-type scrypt secret <CISCO_NEW_PASSWORD>
+   ```
+   The `algorithm-type scrypt` produces a type-9 hash — the strongest available on IOS XE.
+7. Exits config mode with `end`.
+8. Persists the configuration with `write memory`.
+9. Closes the SSH session.
+10. Exits `0` on success, `1` on any failure.
+
+### Britive Broker Config Example — PowerShell
+
+```yaml
+resource_types:
+  - name: cisco-switch
+    permissions:
+      - name: rotate-local-secret
+        checkout_script: Cisco/rotate/rotate-cisco-secret.ps1
+        checkin_script:  Cisco/rotate/rotate-cisco-secret.ps1
+        execution_environment: powershell
+        environment_variables:
+          - CISCO_SWITCH_HOST
+          - CISCO_ADMIN_USER
+          - CISCO_ADMIN_PASSWORD
+          - CISCO_TARGET_USER
+          - CISCO_NEW_PASSWORD
+          - CISCO_ENABLE_SECRET      # optional
+```
+
+### Britive Broker Config Example — Bash
+
+```yaml
+resource_types:
+  - name: cisco-switch
+    permissions:
+      - name: rotate-local-secret
+        checkout_script: Cisco/rotate/rotate-cisco-secret.sh
+        checkin_script:  Cisco/rotate/rotate-cisco-secret.sh
+        execution_environment: bash
+        environment_variables:
+          - CISCO_SWITCH_HOST
+          - CISCO_ADMIN_USER
+          - CISCO_ADMIN_PASSWORD
+          - CISCO_TARGET_USER
+          - CISCO_NEW_PASSWORD
+          - CISCO_ENABLE_SECRET      # optional
+```
+
+---
+
 ## rotate-cisco-account.ps1 / rotate-cisco-account.sh — Single Switch
 
-Connects to one switch via SSH and rotates the password for a specified local user.
+Connects to one switch via SSH and rotates the password for a specified local user, also setting their privilege level.
 
 ### Environment Variables
 
