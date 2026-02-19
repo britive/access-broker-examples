@@ -98,7 +98,7 @@ function Invoke-CiscoPasswordRotation {
         # ── Enter global configuration mode ─────────────────────────────────
         Write-Host "  Entering global configuration mode..."
         $stream.WriteLine("configure terminal")
-        $configOutput = $stream.Expect('\(config\)#', [TimeSpan]::FromSeconds(10))
+        $configOutput = $stream.Expect('(config)', [TimeSpan]::FromSeconds(10))
         if (-not $configOutput) {
             throw "Failed to enter global configuration mode on $SwitchHost."
         }
@@ -110,7 +110,7 @@ function Invoke-CiscoPasswordRotation {
         $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
         [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
         $stream.WriteLine("username $TargetUser privilege $PrivilegeLevel algorithm-type scrypt secret $plainPassword")
-        $setCmdOutput = $stream.Expect('\(config\)#', [TimeSpan]::FromSeconds(10))
+        $setCmdOutput = $stream.Expect('(config)', [TimeSpan]::FromSeconds(10))
         if (-not $setCmdOutput) {
             throw "Timed out waiting for config prompt after setting password on $SwitchHost."
         }
@@ -125,7 +125,7 @@ function Invoke-CiscoPasswordRotation {
         # ── Persist to NVRAM ─────────────────────────────────────────────────
         Write-Host "  Saving configuration to NVRAM..."
         $stream.WriteLine("write memory")
-        $saveOutput = $stream.Expect('\[OK\]|Building configuration|Copy in progress', [TimeSpan]::FromSeconds(30))
+        $saveOutput = $stream.Expect('Building configuration', [TimeSpan]::FromSeconds(30))
         if (-not $saveOutput) {
             throw "Timed out waiting for 'write memory' to complete on $SwitchHost."
         }
