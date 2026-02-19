@@ -51,16 +51,28 @@ function Invoke-CiscoSecretRotation {
 
         $stream = New-SSHShellStream -SessionId $sshSession.SessionId -ErrorAction Stop
 
-        # Allow the switch time to send its MOTD banner and initial prompt
-        # before Expect starts reading; without this pause the buffer may be
-        # empty and the 15-second wait times out before any data arrives.
-        Start-Sleep -Milliseconds 1000
-
-        # ── Wait for the initial exec prompt (> or #) ──────────────────────
-        $output = $stream.Expect('[>#]', [TimeSpan]::FromSeconds(15))
-        if (-not $output) {
+        # ── Poll for the initial exec prompt (> or #) ──────────────────────
+        # Posh-SSH's Expect() can return $null if the SSH buffer is empty at
+        # the moment the call is made, even when data arrives later within the
+        # timeout. Read() in a polling loop is more reliable for the initial
+        # banner/prompt that the switch sends after the SSH channel opens.
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        $output = ''
+        while ([DateTime]::UtcNow -lt $deadline) {
+            $chunk = $stream.Read()
+            if ($chunk) { $output += $chunk }
+            if ($output -match '[>#]') { break }
+            Start-Sleep -Milliseconds 300
+        }
+        if (-not ($output -match '[>#]')) {
             throw "Timed out waiting for initial shell prompt on $SwitchHost."
         }
+
+        # Drain any data that arrived after the first prompt character
+        # (remainder of MOTD, terminal negotiation bytes) so the buffer is
+        # clean before we start sending commands and calling Expect.
+        Start-Sleep -Milliseconds 500
+        $stream.Read() | Out-Null
 
         # ── If in user EXEC mode (>), elevate to privileged EXEC (#) ───────
         if ($output -match '>\s*$') {
