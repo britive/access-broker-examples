@@ -246,7 +246,7 @@ C:\Program Files (x86)\Britive Inc\Britive Broker\
 
 This is required because:
 
-- Scripts are downloaded to `cache\` and executed from there
+- Files are downloaded to `cache\` and executed from there
 - Scan output files are written to `cache\` by the broker process
 - Log files are written to the install directory at runtime
 
@@ -310,9 +310,6 @@ official installation guide:
   and runs as a Windows service.
 - Configuration is stored in `broker-config.yml` inside the install directory.
   This file specifies the broker pool token, execution environment, and script paths.
-- For PowerShell-based integrations (such as this AD example), the
-  `execution_environment` setting in `broker-config.yml` must be set to
-  `powershell.exe -File` so scripts are invoked correctly.
 - The broker communicates outbound to the Britive cloud over HTTPS (port 443)
   and AWS IoT MQTT — no inbound firewall ports are required on the broker host.
 - At startup the broker calls a bootstrap endpoint to register with its broker
