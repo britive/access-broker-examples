@@ -220,6 +220,8 @@ Write-Host "Done. Verify with: dsacls `"$userOU`""
 
 ## 4. Local Machine Requirements (Broker Host)
 
+### 4.1 RSAT Active Directory Module
+
 The machine running the Britive broker must have the **RSAT Active Directory
 PowerShell module** installed. On Windows Server:
 
@@ -232,6 +234,51 @@ On Windows 10/11:
 ```powershell
 Add-WindowsCapability -Online -Name "Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0"
 ```
+
+### 4.2 Broker Install Directory Permissions
+
+The broker writes downloaded scripts and scan output into its install directory.
+The service account **must have Full Control** over the broker install directory:
+
+```text
+C:\Program Files (x86)\Britive Inc\Britive Broker\
+```
+
+This is required because:
+
+- Scripts are downloaded to `cache\` and executed from there
+- Scan output files are written to `cache\` by the broker process
+- Log files are written to the install directory at runtime
+
+**Option A — Grant the service account local admin on the broker host** (simplest):
+
+```powershell
+Add-LocalGroupMember -Group "Administrators" -Member "CONTOSO\svc-britive"
+```
+
+**Option B — Grant Full Control on the install directory only** (least privilege):
+
+```powershell
+$installDir = "C:\Program Files (x86)\Britive Inc\Britive Broker"
+$acl = Get-Acl $installDir
+
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    "CONTOSO\svc-britive",
+    "FullControl",
+    "ContainerInherit,ObjectInherit",
+    "None",
+    "Allow"
+)
+$acl.AddAccessRule($rule)
+Set-Acl -Path $installDir -AclObject $acl
+
+Write-Host "Full Control granted to CONTOSO\svc-britive on $installDir"
+```
+
+> **Note:** Option B is preferred in environments where granting local admin
+> is not acceptable. The service account still needs to be able to **log on
+> as a service** (granted automatically when configured via `sc.exe config` or
+> `services.msc`).
 
 ---
 
@@ -248,3 +295,30 @@ Add-WindowsCapability -Online -Name "Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.
 | `permissions/rotate-svc-account/rotate-svc-account-checkout.ps1` | | ✓ | ✓ | | | | |
 | `rotate/rotate-ad-account.ps1` | | ✓ | ✓ | ✓ | ✓ | | |
 | `rotate/rotate-ad-service-account.ps1` | | ✓ | ✓ | ✓ | ✓ | | ✓ |
+
+---
+
+## 6. Official Documentation
+
+**[Installing Broker on Windows — Britive Docs](https://docs.britive.com/docs/installing-broker-on-windows)**
+
+The Britive on-premise broker is a lightweight Windows service that bridges
+the Britive cloud platform with internal AD resources. Key points from the
+official installation guide:
+
+- The broker is installed under `C:\Program Files (x86)\Britive Inc\Britive Broker\`
+  and runs as a Windows service.
+- Configuration is stored in `broker-config.yml` inside the install directory.
+  This file specifies the broker pool token, execution environment, and script paths.
+- For PowerShell-based integrations (such as this AD example), the
+  `execution_environment` setting in `broker-config.yml` must be set to
+  `powershell.exe -File` so scripts are invoked correctly.
+- The broker communicates outbound to the Britive cloud over HTTPS (port 443)
+  and AWS IoT MQTT — no inbound firewall ports are required on the broker host.
+- At startup the broker calls a bootstrap endpoint to register with its broker
+  pool, then subscribes to an MQTT topic to receive checkout/checkin
+  instructions from the platform in real time.
+
+> Refer to the official guide for the full installer walkthrough, YAML
+> configuration reference, and broker pool token setup:
+> <https://docs.britive.com/docs/installing-broker-on-windows>
