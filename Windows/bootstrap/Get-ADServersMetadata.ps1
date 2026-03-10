@@ -44,8 +44,10 @@ function Get-ServerIPAddresses {
 
     try {
         $ipAddresses = @()
+        # Resolve the hostname to get all associated IP addresses
         $hostEntry = [System.Net.Dns]::GetHostEntry($ComputerName)
         foreach ($ip in $hostEntry.AddressList) {
+            # Filter to IPv4 addresses only; skip IPv6
             if ($ip.AddressFamily -eq 'InterNetwork') {  # IPv4 only
                 $ipAddresses += $ip.IPAddressToString
             }
@@ -53,6 +55,7 @@ function Get-ServerIPAddresses {
         return $ipAddresses
     }
     catch {
+        # DNS resolution failures are non-fatal; return empty array so the caller can handle it
         Write-Verbose "Unable to resolve IP for $ComputerName : $_"
         return @()
     }
@@ -65,20 +68,20 @@ function Get-ServerTier {
         [string]$OU
     )
 
-    # Check naming patterns
+    # First, infer tier from common naming conventions in the server hostname
     if ($ServerName -match "(?i)(web|iis|http)") { return "Web" }
     if ($ServerName -match "(?i)(app|application)") { return "Application" }
     if ($ServerName -match "(?i)(db|database|sql)") { return "Database" }
     if ($ServerName -match "(?i)(dc|domain)") { return "DomainController" }
     if ($ServerName -match "(?i)(file|fs)") { return "FileServer" }
 
-    # Check OU path
+    # Fall back to checking the OU path in AD canonical name if the hostname doesn't match
     if ($OU -match "(?i)Web Servers") { return "Web" }
     if ($OU -match "(?i)Application Servers") { return "Application" }
     if ($OU -match "(?i)Database Servers") { return "Database" }
     if ($OU -match "(?i)Domain Controllers") { return "DomainController" }
 
-    return "Application"  # Default
+    return "Application"  # Default when no naming convention or OU match is found
 }
 
 # Function to determine environment based on naming or OU
@@ -88,18 +91,19 @@ function Get-ServerEnvironment {
         [string]$OU
     )
 
+    # First, infer environment from common naming conventions in the server hostname
     if ($ServerName -match "(?i)(prod|prd)") { return "Production" }
     if ($ServerName -match "(?i)(dev|development)") { return "Development" }
     if ($ServerName -match "(?i)(test|tst|qa)") { return "Test" }
     if ($ServerName -match "(?i)(stage|staging|stg)") { return "Staging" }
 
-    # Check OU path
+    # Fall back to checking the OU path in AD canonical name if the hostname doesn't match
     if ($OU -match "(?i)Production") { return "Production" }
     if ($OU -match "(?i)Development") { return "Development" }
     if ($OU -match "(?i)Test") { return "Test" }
     if ($OU -match "(?i)Staging") { return "Staging" }
 
-    return "Development"  # Default
+    return "Development"  # Default when no naming convention or OU match is found
 }
 
 # Main script
@@ -111,7 +115,8 @@ try {
 
     Import-Module ActiveDirectory -ErrorAction Stop
 
-    # Build the AD query
+    # Build the AD query — filter to enabled computers whose OS contains "Server"
+    # to exclude workstations and disabled accounts
     $searchParams = @{
         Filter = 'OperatingSystem -like "*Server*" -and Enabled -eq $true'
         Properties = @(
@@ -130,6 +135,7 @@ try {
         )
     }
 
+    # Scope the search to a specific OU if provided; otherwise searches the entire domain
     if ($OUPath) {
         $searchParams['SearchBase'] = $OUPath
     }
@@ -151,7 +157,7 @@ try {
     foreach ($server in $adServers) {
         Write-Verbose "Processing: $($server.Name)"
 
-        # Test connectivity if not including offline servers
+        # Skip offline servers unless -IncludeOffline was specified
         $isOnline = $true
         if (-not $IncludeOffline) {
             $isOnline = Test-Connection -ComputerName $server.DNSHostName -Count 1 -Quiet -ErrorAction SilentlyContinue
@@ -161,7 +167,7 @@ try {
             }
         }
 
-        # Get IP addresses
+        # Prefer the IPv4Address already stored in AD; fall back to a live DNS lookup
         $ipAddresses = @()
         if ($server.IPv4Address) {
             $ipAddresses += $server.IPv4Address
@@ -170,7 +176,7 @@ try {
             $ipAddresses = Get-ServerIPAddresses -ComputerName $server.DNSHostName
         }
 
-        # Determine OS type string
+        # Build a human-readable OS string; append the build version when available
         $osType = "Windows Server"
         if ($server.OperatingSystem) {
             $osType = $server.OperatingSystem
@@ -179,11 +185,12 @@ try {
             }
         }
 
-        # Determine tier and environment
+        # Classify the server into a tier and environment using naming/OU conventions
         $tier = Get-ServerTier -ServerName $server.Name -OU $server.CanonicalName
         $environment = Get-ServerEnvironment -ServerName $server.Name -OU $server.CanonicalName
 
-        # Build metadata object
+        # Assemble the final metadata object for this server; labels are arrays
+        # to match the Britive resource label schema (multiple values per key)
         $metadata = [PSCustomObject]@{
             name = $server.Name
             type = $osType
@@ -210,10 +217,11 @@ try {
 
     Write-Verbose "Successfully collected metadata for $($serversMetadata.Count) server(s)."
 
-    # Convert to JSON and output
+    # Serialize to JSON with sufficient depth to capture nested label arrays
     $jsonOutput = $serversMetadata | ConvertTo-Json -Depth 10
 
-    # Ensure array format even for single item
+    # ConvertTo-Json returns a bare object (not an array) when there is only one item;
+    # wrap it in brackets so the output is always a valid JSON array
     if ($serversMetadata.Count -eq 1) {
         $jsonOutput = "[$jsonOutput]"
     }
