@@ -117,11 +117,14 @@ try {
 
         # Build the resource object matching the Britive Access Broker resource schema
         $results += [PSCustomObject]@{
-            type   = "Windows"
-            name   = $fqdn
-            labels = @{
+            type       = "Windows"
+            name       = $server.Name
+            labels     = @{
                 OS          = @("Windows")
                 Environment = @($environment)
+            }
+            parameters = @{
+                hostname = $fqdn
             }
         }
     }
