@@ -31,7 +31,8 @@ a JSON array in the Britive Access Broker resource format.
 ]
 ```
 
-- `name` is the server FQDN (`DNSHostName` from AD, falls back to the SAM account name)
+- `name` is the short server name (SAM account name from AD)
+- `parameters.hostname` is the server FQDN (`DNSHostName` from AD, falls back to the SAM account name)
 - `Environment` is inferred from the server hostname (e.g. `prod`, `dev`, `qa`, `stg`) and then
   the OU canonical path; defaults to `Development` if no pattern matches
 
@@ -88,6 +89,87 @@ windows-resource-generator.bat
 ```
 ```powershell
 & "C:\Britive\windows-resource-generator.bat"
+```
+
+---
+
+## Resource Generator with Active Directory Domain (Primary)
+
+Use these scripts when you also want to register the AD domain itself as a resource alongside
+the Windows servers.
+
+### `windows-ad-resource-generator.ps1`
+
+Extends `windows-resource-generator.ps1` by appending an `ActiveDirectory` entry for the
+domain to the output. Uses `Get-ADDomain` to retrieve domain information.
+
+**JSON output format:**
+```json
+[
+  {
+    "type": "Windows",
+    "name": "SERVER01",
+    "labels": {
+      "OS": ["Windows"],
+      "Environment": ["Development"]
+    },
+    "parameters": {
+      "hostname": "server01.britive.local"
+    }
+  },
+  {
+    "type": "ActiveDirectory",
+    "name": "BRITIVE",
+    "labels": {
+      "Environment": ["Development"]
+    },
+    "parameters": {
+      "domain": "britive.local"
+    }
+  }
+]
+```
+
+- AD domain `name` is the NetBIOS short name (`$domain.Name`)
+- `parameters.domain` is the full DNS domain FQDN (`$domain.DNSRoot`)
+
+**Parameters:** Same as `windows-resource-generator.ps1` (`-OUPath`, `-IncludeOffline`)
+
+**Run manually:**
+```powershell
+.\windows-ad-resource-generator.ps1
+
+.\windows-ad-resource-generator.ps1 -OUPath "OU=Servers,DC=britive,DC=local"
+
+.\windows-ad-resource-generator.ps1 -IncludeOffline
+```
+
+**Requirements:**
+
+- Windows Server with Active Directory PowerShell module (Remote Server Administration Tools)
+- Domain-joined machine with read access to AD computer and domain objects
+
+---
+
+### `windows-ad-resource-generator.bat`
+
+Wrapper that invokes `windows-ad-resource-generator.ps1` via `powershell.exe`.
+
+**Broker config (`config.yml`):**
+
+```yaml
+config:
+  version: 2
+  bootstrap:
+    tenant_subdomain: <your-tenant>
+    authentication_token: <your-token>
+    resources_generator: C:\Britive\windows-ad-resource-generator.bat
+```
+
+**Run manually:**
+
+```cmd
+windows-ad-resource-generator.bat
 ```
 
 ---
