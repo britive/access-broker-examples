@@ -23,6 +23,9 @@ a JSON array in the Britive Access Broker resource format.
     "labels": {
       "OS": ["Windows"],
       "Environment": ["Production"]
+    },
+    "parameters": {
+      "hostname": "server01.contoso.com"
     }
   }
 ]
