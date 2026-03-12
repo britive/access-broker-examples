@@ -4,8 +4,8 @@
 # Revokes role permissions from a temporary MySQL user
 
 # Input validation - check required environment variables
-if [[ -z "$user" || -z "$host" || -z "$dburl" || -z "$secret" || -z "$table" || -z "$role" ]]; then
-    echo "Error: Missing required environment variables. Please set: user, host, dburl, secret, table, role" >&2
+if [[ -z "$user" || -z "$host" || -z "$dburl" || -z "$secret" || -z "$table" || -z "$role" || -z "$database_name" ]]; then
+    echo "Error: Missing required environment variables. Please set: user, host, dburl, secret, table, role, database_name" >&2
     exit 1
 fi
 

@@ -12,18 +12,21 @@ This directory contains scripts for managing temporary user roles in Aurora MySQ
 - AWS CLI configured with appropriate permissions
 - `jq` command-line JSON processor
 - MySQL client installed
-- Access to AWS Secrets Manager in us-west-2 region
+- Access to AWS Secrets Manager (default region: `us-west-2`, override with `AWS_REGION`)
 
 ## Environment Variables
 
-The env variables are set automatically by the platform and made available during checkout/in. The scripts expect the following environment variables:
+These variables are configured on the Britive permission and injected automatically during checkout/checkin. All variables are required.
 
-- `user` - The MySQL username to create/manage
-- `host` - The MySQL host for user authentication scope
-- `dburl` - The MySQL database URL/endpoint
-- `secret` - AWS Secrets Manager secret ID containing database credentials
-- `table` - The table name for permission scope
-- `role` - The MySQL role/privilege to grant (e.g., SELECT, INSERT, UPDATE, DELETE)
+| Variable | Description | Example |
+| --- | --- | --- |
+| `user` | Username (sanitized: domain and special chars stripped) | `john.doe@company.com` |
+| `host` | MySQL host pattern for user authentication scope | `%` or `10.0.%` |
+| `dburl` | MySQL database endpoint URL | `aurora-cluster.cluster-xyz.us-west-2.rds.amazonaws.com` |
+| `secret` | AWS Secrets Manager secret ID for admin credentials | `prod/aurora/admin` |
+| `database_name` | Target database name for permission scope | `appdb` |
+| `table` | Table name (or `*` for all tables in the database) | `orders` |
+| `role` | MySQL privilege(s) to grant | `SELECT` or `SELECT, INSERT` |
 
 ## Usage
 
@@ -34,7 +37,8 @@ export user="temp_user"
 export host="%.example.com"
 export dburl="aurora-mysql-cluster.cluster-xxxxx.us-west-2.rds.amazonaws.com"
 export secret="aurora-mysql-admin-credentials"
-export table="users"
+export database_name="appdb"
+export table="orders"
 export role="SELECT"
 
 ./checkout_sql_role.sh
@@ -45,7 +49,7 @@ This script will:
 1. Generate a random password for the temporary user
 2. Retrieve database admin credentials from AWS Secrets Manager
 3. Create a MySQL user with the generated password
-4. Grant the specified role on the database table to the user
+4. Grant the specified privilege(s) on `database_name.table` to the user
 5. Output the username, password, and connection command
 
 ### Example Checkin (Revoke Permissions)
@@ -58,24 +62,18 @@ This script will:
 This script will:
 
 1. Retrieve database admin credentials from AWS Secrets Manager
-2. Revoke the specified role from the user on the database table
+2. Revoke the specified privilege(s) from the user on the database table
 3. Clean up temporary configuration files
+
+> **Note:** The checkin script only revokes permissions — it does not drop the user account. This is intentional for audit trail purposes.
 
 ## Security Features
 
-- Temporary configuration files are automatically cleaned up
-- Database credentials are retrieved securely from AWS Secrets Manager
-- Random passwords are generated for temporary users
-- Username sanitization removes special characters
-
-## Configuration
-
-Update the `DATABASE_NAME` variable in both scripts to match your target database:
-
-```bash
-DATABASE_NAME="your_database_name"
-```
+- Temporary configuration files are automatically cleaned up on both success and failure
+- Database admin credentials are retrieved securely from AWS Secrets Manager
+- Random passwords are generated for each temporary user
+- Username sanitization strips email domains and non-alphanumeric characters
 
 ## Error Handling
 
-Both scripts include error handling and will exit with status code 1 if any database operation fails. Temporary files are cleaned up even on failure.
+Both scripts validate all required environment variables before executing. They exit with status code `1` if any operation fails, and always clean up temporary credential files even on failure. The checkout script rolls back the created user if the subsequent `GRANT` fails.
