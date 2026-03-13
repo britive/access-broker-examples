@@ -1,5 +1,6 @@
 broker-config.yml
 .vscode/
+.claude/
 */.vscode/
 
 # Created by https://www.toptal.com/developers/gitignore/api/powershell,windows,linux,macos,pycharm+all,intellij+all,sublimetext
