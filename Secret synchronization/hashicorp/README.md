@@ -29,13 +29,16 @@ Supports both **KV secrets engine v1** and **v2**, token authentication, and App
 ## Prerequisites
 
 ### All scripts
+
 - Network access to the Vault server address (`VAULT_ADDR`) on port 443 (or 8200 for non-TLS dev environments)
 - The authenticating token or AppRole role must have a policy granting write access to `VAULT_SECRET_PATH`
 
 ### CLI variant (`sync-to-hashicorp-vault.sh`)
+
 - **Vault CLI** installed and on `PATH`
 
 ### curl and PowerShell variants
+
 - `curl`, `jq` (bash) or `Invoke-RestMethod` (PowerShell, built-in)
 
 ---
@@ -114,6 +117,7 @@ The scripts auto-detect the path structure for KV v2 (inserts `/data/` if missin
 | **AppRole** | Long-running broker processes; role ID is low-sensitivity, secret ID is rotatable |
 
 AppRole best practices:
+
 - Set a short `secret_id_ttl` (e.g. `24h`) and rotate the secret ID regularly.
 - Set `secret_id_num_uses = 1` for one-time secret IDs if the broker fetches a new one each run.
 - Bind the AppRole's `token_policies` to the minimal write-only policy above.
@@ -124,6 +128,7 @@ AppRole best practices:
 ## Security Considerations
 
 ### Secret not passed as a process argument
+
 - **CLI variant**: The Vault CLI `<key>=-` syntax reads the value from stdin. `SECRET_VALUE` is piped via `printf '%s'`, keeping it out of the process argument list visible in `ps aux`.
 - **curl variant**:
   - `SECRET_VALUE` is passed to `jq` via stdin using `jq -Rs` rather than `--arg`.
@@ -131,18 +136,22 @@ AppRole best practices:
 - **PowerShell variant**: All sensitive values are held in PS variables and sent as `Invoke-RestMethod` request bodies — they do not appear as OS-level process arguments.
 
 ### TLS
+
 - All Vault communication should use HTTPS. Only set `VAULT_SKIP_VERIFY=true` in isolated dev or test environments — never in production.
 - Validate Vault's TLS certificate against a trusted CA, or pin the certificate.
 
 ### Token hygiene
+
 - Use tokens with a short TTL. Prefer renewable tokens and let the broker renew them rather than using long-lived static tokens.
 - Never log `VAULT_TOKEN` or `HCV_TOKEN`. The scripts explicitly avoid this.
 - Revoke the token at broker shutdown if the broker lifecycle supports it.
 
 ### Namespace isolation
+
 - On multi-tenant Vault clusters (Enterprise or HCP Vault Dedicated), always set `VAULT_NAMESPACE` to limit the scope of the token to the correct namespace.
 
 ### Logging
+
 - The scripts log the Vault address, path, and key name for auditability.
 - The secret **value** and the Vault token are never printed to stdout or stderr.
 - Ensure the broker platform does not enable shell debug tracing (`set -x`) or PowerShell transcript logging.
