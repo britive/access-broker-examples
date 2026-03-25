@@ -25,13 +25,16 @@ Writes a secret value from the Britive broker into an **AWS Secrets Manager** se
 ## Prerequisites
 
 ### All scripts
+
 - Network access to `secretsmanager.<region>.amazonaws.com` (port 443)
 
 ### CLI variant (`sync-to-aws-secrets-manager.sh`, `.ps1`)
+
 - **AWS CLI v2** installed and on `PATH`
 - AWS credentials available via one of: environment variables, EC2/ECS instance profile, IRSA (EKS), or a named profile (`AWS_PROFILE`)
 
 ### curl variant (`sync-to-aws-secrets-manager-curl.sh`)
+
 - `curl`, `jq`, `openssl`, `xxd` (all standard on most Linux distributions)
 - Static AWS credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) or temporary credentials with a session token
 
@@ -92,25 +95,30 @@ The identity used to run these scripts needs only the minimum permissions requir
 ## Security Considerations
 
 ### Secret not passed as a process argument
+
 Passing a secret as a CLI argument (`--secret-string "mypassword"`) makes it visible in `ps aux` for the duration of the process. These scripts avoid that:
 
 - **CLI variants**: The secret is written to a `chmod 600` temp file and passed as `--secret-string file://<path>`. The temp file is removed by a `trap`/`finally` block regardless of success or failure.
 - **curl variant**: The JSON request body is built using `jq -Rs` which reads `SECRET_VALUE` from stdin rather than passing it as a `--arg`, keeping it out of the `jq` process argument list.
 
 ### TLS in transit
+
 All communication with AWS Secrets Manager is over HTTPS. The curl variant does not disable TLS verification (`--insecure` is never used).
 
 ### Credential scope
+
 - Prefer **IRSA** (IAM Roles for Service Accounts on EKS) or **EC2/ECS instance profiles** over long-lived access keys.
 - If static keys are unavoidable, use **STS AssumeRole** to obtain short-lived credentials and set `AWS_SESSION_TOKEN`.
 - Never share the write identity's credentials with the applications reading the secret.
 
 ### Logging
+
 - The scripts log the secret **name** and region for auditability.
 - The secret **value** (`SECRET_VALUE`) is never printed to stdout or stderr.
 - Ensure the broker platform does not enable shell debug tracing (`set -x`) or PowerShell transcript logging, as these would capture all variable expansions.
 
 ### Rotation and versioning
+
 AWS Secrets Manager keeps previous versions (labelled `AWSPREVIOUS`) automatically. Applications using `GetSecretValue` without a `VersionStage` will always receive the latest version. Older versions are garbage-collected by AWS after a configurable number of days.
 
 ---

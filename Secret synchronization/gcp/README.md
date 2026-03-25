@@ -29,19 +29,23 @@ Each invocation **adds a new version** to the secret resource — GCP Secret Man
 ## Prerequisites
 
 ### All scripts
+
 - Network access to `secretmanager.googleapis.com` (port 443)
 - For SA key auth: network access to `oauth2.googleapis.com`
 - The authenticating identity must have the **Secret Manager Secret Version Adder** role on the specific secret (or the project)
 
 ### CLI variant (`sync-to-gcp-secret-manager.sh`)
+
 - **Google Cloud SDK** (`gcloud`) installed and on `PATH`
 - Authentication via: application default credentials, `gcloud auth activate-service-account`, Workload Identity, or a service account key file (`GCP_SA_KEY_FILE`)
 
 ### curl variant (`sync-to-gcp-secret-manager-curl.sh`)
+
 - `curl`, `jq`, `base64` (standard on Linux)
 - For SA key authentication: also `openssl`
 
 ### PowerShell variant (`sync-to-gcp-secret-manager.ps1`)
+
 - PowerShell **6+** (Core) — required for RSA key import via `ImportPkcs8PrivateKey`
 - PowerShell 5.1 on Windows is supported only if `GCP_ACCESS_TOKEN` is pre-obtained externally
 
@@ -121,14 +125,17 @@ Consumers accessing `latest` (the default) always receive the most recent enable
 ## Authentication Methods
 
 ### Service account key file (`GCP_SA_KEY_FILE`)
+
 The scripts generate a short-lived OAuth2 access token by signing a JWT with the service account private key (RS256). The token is valid for 1 hour. This works from any host with outbound HTTPS to `oauth2.googleapis.com`.
 
 > **Important**: Service account key files are long-lived credentials. Store them only on the broker host, restrict file permissions to `600`, and rotate them on a schedule. Prefer **Workload Identity** over key files on GKE or Cloud Run.
 
 ### Workload Identity / pre-obtained token (`GCP_ACCESS_TOKEN`)
+
 On GKE, Cloud Run, or GCE, the broker can obtain an access token from the metadata server without any key file. Set `GCP_ACCESS_TOKEN` if the token is fetched externally (e.g., via Workload Identity Federation from a non-GCP host).
 
 ### Instance metadata server (no variables set)
+
 When neither `GCP_SA_KEY_FILE` nor `GCP_ACCESS_TOKEN` is set, the scripts query `http://metadata.google.internal/...` automatically. This is the preferred method for brokers running on GCE, GKE, or Cloud Run with the correct service account attached.
 
 ---
@@ -136,6 +143,7 @@ When neither `GCP_SA_KEY_FILE` nor `GCP_ACCESS_TOKEN` is set, the scripts query 
 ## Security Considerations
 
 ### Secret not passed as a process argument
+
 - **CLI variant**: `SECRET_VALUE` is piped to `gcloud secrets versions add --data-file=-` via `printf '%s'`. It never appears as a CLI argument.
 - **curl variant**:
   - `SECRET_VALUE` is piped through `base64` and then through `jq -Rs` to build the JSON payload, keeping it out of process arguments at both steps.
@@ -143,18 +151,22 @@ When neither `GCP_SA_KEY_FILE` nor `GCP_ACCESS_TOKEN` is set, the scripts query 
 - **PowerShell variant**: All sensitive values are in PS variables and encoded/sent via `Invoke-RestMethod` — no OS-level process argument exposure.
 
 ### Service account key file security
+
 - Restrict the key file to `chmod 600` (or equivalent ACL on Windows).
 - Do not check the key file into source control.
 - Rotate key files on a regular schedule (90 days recommended).
 - Consider using **Workload Identity** or **Workload Identity Federation** to eliminate the key file entirely.
 
 ### TLS
+
 All communication with GCP APIs is over HTTPS. None of the scripts disable TLS verification.
 
 ### Metadata server SSRF protection
+
 On GCE/GKE, the metadata server is accessible from any process on the instance. Ensure only the broker process can reach it, or use **Workload Identity** to restrict token issuance to specific Kubernetes service accounts.
 
 ### Logging
+
 - The scripts log the GCP project, secret name, and new version name for auditability.
 - The secret **value** is never printed to stdout or stderr.
 - Ensure the broker platform does not enable shell debug tracing (`set -x`) or PowerShell transcript logging.

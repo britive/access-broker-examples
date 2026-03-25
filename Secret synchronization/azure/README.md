@@ -26,14 +26,17 @@ Writes a secret value from the Britive broker into an **Azure Key Vault** secret
 ## Prerequisites
 
 ### All scripts
+
 - Network access to `login.microsoftonline.com` (port 443) and `<vault-name>.vault.azure.net` (port 443)
 - The authenticating identity must have the **Key Vault Secrets Officer** role (or a custom role with `Microsoft.KeyVault/vaults/secrets/setSecret/action`) on the target vault
 
 ### CLI variant (`sync-to-azure-key-vault.sh`)
+
 - **Azure CLI v2** installed and on `PATH`
 - Authentication pre-configured via: `az login`, Managed Identity, service principal environment variables (`AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID`), or Workload Identity
 
 ### curl and PowerShell variants
+
 - Service principal with a client secret (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`)
 - For managed identity or federated identity, use the CLI variant instead
 
@@ -84,6 +87,7 @@ Grant only the permissions needed for writing secrets:
 ## Security Considerations
 
 ### Secret not passed as a process argument
+
 - **CLI variant**: The secret is written to a `chmod 600` temp file and passed with `az keyvault secret set --file <path>`. The temp file is removed by a `trap` block regardless of success or failure.
 - **curl variant**:
   - `AZURE_CLIENT_SECRET` is written to a `chmod 600` temp file and passed using curl's `--data-urlencode "client_secret@<file>"` form, which reads the value from the file and URL-encodes it without exposing it as a command-line argument.
@@ -91,23 +95,28 @@ Grant only the permissions needed for writing secrets:
 - **PowerShell variant**: Secrets are held in PS variables and sent as the body of `Invoke-RestMethod` calls — they do not appear as OS-level process arguments.
 
 ### TLS in transit
+
 All communication with Azure AD and Key Vault is over HTTPS. None of the scripts disable TLS certificate verification.
 
 ### Credential scope for the service principal
+
 - Use a dedicated service principal for secret synchronization — do not reuse an application identity.
 - Set the client secret to expire and rotate it on a schedule. Consider using **certificate-based authentication** (no client secret at all) for higher-assurance environments.
 - The service principal only needs `setSecret` on the specific Key Vault, not across the subscription.
 
 ### Key Vault network controls
+
 - Enable **Key Vault Firewall** and restrict access to the broker host's IP range or subnet, rather than allowing all networks.
 - For highest isolation, use **Private Endpoint** for the Key Vault and ensure the broker host is on the same virtual network.
 
 ### Logging
+
 - The scripts log the vault URL and secret name for auditability.
 - The secret **value** and the client secret are never printed to stdout or stderr.
 - Ensure the broker platform does not enable shell debug tracing (`set -x`) or PowerShell transcript logging.
 
 ### Secret versioning
+
 Azure Key Vault maintains the full version history of each secret. Previous versions are accessible via their version ID but are marked inactive. Consumers using `GetSecret` without a version ID always receive the current version. Versions can be individually disabled or deleted if required.
 
 ---
