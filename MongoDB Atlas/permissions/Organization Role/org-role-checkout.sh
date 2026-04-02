@@ -55,6 +55,7 @@ MISSING=()
 [ -z "${ORG_ID}" ]         && MISSING+=("org_id")
 [ -z "${ATLAS_USERNAME}" ] && MISSING+=("atlas_username")
 [ -z "${ORG_ROLE}" ]       && MISSING+=("org_role")
+[ -z "${URL}" ]            && MISSING+=("url")
 if [ "${#MISSING[@]}" -gt 0 ]; then
   echo "ERROR: Missing required environment variables: ${MISSING[*]}"
   exit 1
