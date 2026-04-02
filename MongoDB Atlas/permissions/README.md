@@ -1,194 +1,164 @@
-# MongoDB Atlas JIT ZSP Access with Britive
+# MongoDB Atlas JIT Access with Britive
 
-## Overview
+Secure Just-In-Time (JIT) access for MongoDB Atlas using the Britive Access Broker. All scripts follow a Zero Standing Privileges (ZSP) model — elevated access exists only for the duration of a Britive session and is automatically revoked on checkin or timer expiry.
 
-This repository provides a secure Just-In-Time (JIT) access solution for MongoDB Atlas using Britive's Zero Standing Privileges (ZSP) approach. It eliminates permanent database credentials by dynamically creating and managing temporary user access only when needed, significantly reducing security risks and attack surface.
+## Security Benefits
 
-## 🔒 Security Benefits
+- **Zero Standing Privileges** — no permanent elevated database credentials; roles exist only during an active session
+- **Just-In-Time Access** — elevation is granted on demand and revoked automatically
+- **Audit Trail** — every checkout and checkin is logged in Britive and in the script log file
+- **Least Privilege** — each permission type is scoped to the minimum required: database, project, or org level
+- **Secret Safety** — credentials are passed via Authorization headers or Digest auth; never logged or exposed in process listings
 
-- **Zero Standing Privileges**: No permanent database credentials exist, eliminating credential theft risks
-- **Just-In-Time Access**: Database users are created only when needed and automatically removed after use
-- **Audit Trail**: Complete visibility of who accessed what and when
-- **Reduced Attack Surface**: Temporary credentials minimize exposure window
-- **Compliance Ready**: Meets regulatory requirements for privileged access management
+## Architecture
 
-## 🏗️ Architecture
-
-```
-User Request → Britive Platform → Checkout Script → MongoDB Atlas API → Temporary User Created or Short Lived priviliged access enabled
-                                                                      ↓
-User Session ← Temporary Credentials ← Database Access Granted ←────
-                                                                      ↓
-Session End → Checkin Script → MongoDB Atlas API → Temporary User Deleted or Short Lived priviliged access revoked
+```text
+User Request → Britive Platform → Checkout Script → MongoDB Atlas API → Role Elevated
+                                                                              ↓
+User Session ←────────────────── Temporary Access Granted ──────────────────
+                                                                              ↓
+Session End  → Checkin Script  → MongoDB Atlas API → Role Revoked
 ```
 
-## 📋 Prerequisites
+## Permission Types
 
-- **Britive Platform** access with appropriate permissions
-- **MongoDB Atlas** project with API access enabled
-- **MongoDB Atlas API Keys** (Public and Private keys)
-- **Britive Access Broker** configured for MongoDB Atlas
+Four permission types are available, each in its own subdirectory. Choose the type that matches the scope of access needed.
 
-## 🚀 Quick Start
+| Directory | Scope | Auth Method | Use Case |
+| --------- | ----- | ----------- | -------- |
+| [DB Roles](./DB%20Roles/) | Database-level roles | OAuth 2.0 | Grant `dbAdmin`, `readWrite`, etc. on a specific database |
+| [Organization Role](./Organization%20Role/) | Org-level roles | OAuth 2.0 | Grant `ORG_READ_ONLY`, `ORG_MEMBER`, etc. across the org |
+| [Project Role](./Project%20Role/) | Project-level roles | OAuth 2.0 | Grant `GROUP_READ_ONLY`, `GROUP_OWNER`, etc. within a project |
+| [On Premises MongoDB](./On%20Premises%20MongoDB/) | Database-level roles | API Key Digest | Grant `dbAdmin`/`read` on on-premises or standalone MongoDB |
 
-### 1. MongoDB Atlas Configuration
+## Prerequisites
 
-1. Generate MongoDB Atlas API Keys:
-   - Log in to MongoDB Atlas
-   - Navigate to **Organization Access Manager**
-   - Go to **API Keys** → **Create API Key**
-   - Assign `Organization Owner` or `Organization Project Creator` role
-   - Save the Public and Private keys securely
+- **Britive Platform** access with an Access Broker configured
+- **MongoDB Atlas** organization and project access
+- **MongoDB Atlas Service Account** with appropriate scope (OAuth2, for DB / Org / Project Role scripts)
+  - Or a **MongoDB Atlas API Key pair** (for On Premises scripts)
+- `curl` and `jq` installed on the broker host
 
-2. Note your MongoDB Atlas Project ID:
-   - Found in Project Settings → Project ID
+## Authentication Methods
 
-### 2. Script Configuration
+### OAuth 2.0 (DB Roles, Organization Role, Project Role)
 
-The solution consists of two main scripts:
+Recommended for all Atlas-native integrations. A Service Account is created in Atlas and granted the minimum required scope. Scripts exchange client credentials for a short-lived token on each execution — no long-lived secrets in the execution environment.
 
-#### Checkout Script (`mongoDB_dbAdmin_jit_checkout.sh`)
-Assign temporary MongoDB Atlas dbAdmin permission upon access request.
+Required Service Account scopes per permission type:
 
-```bash
-# Environment variables required (provided by Britive)
-PUBLIC_KEY="${mongoDB_public_key}"
-PRIVATE_KEY="${mongoDB_private_key}"
-PROJECT_ID="${mongoDB_project_id}"
-USERNAME=${username}  # Automatically captured from SSO user email during checkout
-```
+| Permission Type | Required Scope |
+| --------------- | -------------- |
+| DB Roles | Project Database Access Admin (or Project Owner) |
+| Organization Role | Organization Owner |
+| Project Role | Project Owner |
 
-#### Checkin Script (`mongoDB_dbAdmin_jit_checkin.sh`)
-Revoke temporary MongoDB Atlas dbAdmin permission upon or checkin or timer expiry.
+### API Key Digest Auth (On Premises MongoDB)
 
-### 3. Britive Integration Setup
+Used where OAuth2 Service Accounts are not available. A public/private API key pair authenticates via HTTP Digest on each request.
 
+## Britive Integration Setup
 
-2. **Configure Britive Access Broker**:
-   - Add MongoDB Atlas scripts in Britive UI
-   - Configure environment variables:
-     - `mongoDB_public_key`
-     - `mongoDB_private_key`
-     - `mongoDB_project_id`
+### 1. Create a Resource Type
 
-3. **Create Profiles**:
-   - Define access profiles (e.g., `dbAdmin`, `readOnly`, `readWrite`)
-   - Associate checkout/checkin scripts with each profile
-   - Set appropriate timeout values (recommended: 1-8 hours)
+In the Britive UI → Resource Manager → Resource Types, create a new type with:
 
+- Checkout script: the appropriate `*-checkout.sh`
+- Checkin script: the appropriate `*-checkin.sh`
+- Variables matching the table in the subdirectory README
 
-## 🔧 Configuration Details
+### 2. Configure Variables
 
-### Environment Variables
+Add the required variables to the Resource Type. Mark secrets (`client_secret`, `mongoDB_private_key`) as **sensitive** — Britive encrypts them at rest and injects them securely at runtime.
 
-| Variable | Description | Source |
-|----------|-------------|--------|
-| `mongoDB_public_key` | MongoDB Atlas API Public Key | MongoDB Atlas Console |
-| `mongoDB_private_key` | MongoDB Atlas API Private Key | MongoDB Atlas Console |
-| `mongoDB_project_id` | MongoDB Atlas Project ID | MongoDB Atlas Project Settings |
-| `username` | User requesting access | Automatically captured by Britive using SSO email |
+### 3. Create a Profile
 
-### Supported Database Roles
+In Britive Resource Manager → Profiles:
 
-The scripts can support any MongoDB role. For instance:
+- Set `expiration_duration` (recommended: 1–4 hours for production, max 8 hours)
+- Add an `approval` policy block for sensitive roles (`GROUP_OWNER`, `atlasAdmin`, `ORG_OWNER`)
+- Associate the Resource Type and variables created above
 
-- `atlasAdmin` - Full admin access
-- `dbAdmin` - Database administration
-- `readWriteAnyDatabase` - Read/write access to all databases
-- `readAnyDatabase` - Read-only access to all databases
-- Custom roles per specific database
+## Variable Reference
 
-## 🔍 Troubleshooting
+### OAuth2 Scripts (DB Roles / Organization Role / Project Role)
 
-### Common Issues
+These use Britive broker template substitution (`{{variable_name}}`):
 
-1. **HTTP 405 Error during role update**
-   - Verify API endpoint and HTTP method
-   - Check MongoDB Atlas API version compatibility
-   - Ensure proper URL formatting with username variable populated
+| Variable | Description |
+| -------- | ----------- |
+| `client_id` | Atlas Service Account client ID |
+| `client_secret` | Atlas Service Account client secret (**sensitive**) |
+| `project_id` | Atlas project (group) ID |
+| `org_id` | Atlas organization ID (Organization Role only) |
+| `atlas_username` | Atlas username — usually the user's SSO email |
+| `db_username` | Atlas database username (DB Roles only) |
+| `db_checkout_role` | Database role to grant (DB Roles only) |
+| `db_checkout_database` | Target database name (DB Roles only) |
+| `org_role` | Org role to grant (Organization Role only) |
+| `project_role` | Project role to grant (Project Role only) |
 
-2. **Permission Denied**
-   - Verify S3 bucket permissions for Britive Access Broker
-   - Check MongoDB Atlas API key permissions
-   - Ensure IP whitelist includes Britive broker IPs
+### API Key Scripts (On Premises MongoDB)
 
-3. **Username Processing Issues**
-   - Verify the `username` environment variable is being passed correctly
-   - Check variable name case sensitivity
-   - Add debug logging to verify variable values
+These read from environment variables (`${variable_name}`):
 
+| Variable | Required | Description | Default |
+| -------- | -------- | ----------- | ------- |
+| `mongoDB_public_key` | Yes | Atlas API public key | — |
+| `mongoDB_private_key` | Yes | Atlas API private key (**sensitive**) | — |
+| `mongoDB_project_id` | Yes | Atlas project (group) ID | — |
+| `mongoDB_username` | Yes | Full SSO email of the requesting user | — |
+| `mongoDB_database` | No | Target database name | `sample_mflix` |
+| `mongoDB_auth_source` | No | Auth source for the database user | `admin` |
+| `LOG_DIR` | No | Log file directory on the broker host | `/tmp` |
 
-## 📊 Monitoring & Auditing
+## Troubleshooting
 
-### Britive Audit Logs
-- Track all checkout/checkin events
-- Monitor access patterns
-- Set up alerts for anomalous behavior
+**`ERROR: Failed to obtain access token`**
+Verify `client_id` and `client_secret`. Confirm the Service Account is active and has the required scope in Atlas.
 
-### MongoDB Atlas Audit
-- Enable database audit logs
-- Monitor temporary user activities
-- Track permission changes
+**`ERROR: User not found in org / project`**
+Confirm `atlas_username` exactly matches the Atlas username. Verify the user is a member of the organization.
 
-## 🛡️ Security Best Practices
+**`ERROR: Role grant/revoke failed with HTTP 401`**
+API key or Service Account credentials are invalid or expired. For Digest auth, verify the broker's egress IP is in the Atlas API access list.
 
-1. **Least Privilege**: Grant minimum required permissions
-2. **Time-bound Access**: Set appropriate session timeouts
-3. **Regular Reviews**: Audit access patterns monthly
-4. **Secure Storage**: Encrypt scripts in S3 with KMS
-5. **Network Security**: Restrict MongoDB Atlas access to specific IPs
+**`ERROR: Role grant/revoke failed with HTTP 403`**
+The Service Account or API key lacks the required permission scope. See scope requirements in each subdirectory's README.
 
-## 🤝 Contributing
+**`ERROR: Required tool 'jq' is not installed`**
+Install `jq` on the broker host: `apt install jq` or `yum install jq`.
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Security Best Practices
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+1. **Least Privilege** — use the narrowest permission type that satisfies the use case (DB role over Project role over Org role)
+2. **Approval Gates** — require approval for sensitive roles (`GROUP_OWNER`, `atlasAdmin`, `ORG_OWNER`)
+3. **Short Sessions** — use 1–4 hour expirations; avoid sessions longer than 8 hours for production
+4. **IP Restriction** — restrict the Service Account and API keys to the broker's egress IP in Atlas Access Manager
+5. **Atlas Audit Logs** — enable MongoDB Atlas database auditing to capture all role changes and auth events
+6. **Rotate Secrets** — rotate `client_secret` and API keys on a regular schedule
 
-## 📝 License
+## Resources
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Resources / Acknowledgments
-
-- [Britive](https://www.britive.com/) for the Zero Standing Privileges platform
-- [MongoDB Atlas](https://www.mongodb.com/atlas) for the database platform
-
-## 📞 Support
-
-For issues and questions:
-- Create an issue in this repository
-- Contact your Britive administrator
-- Refer to [MongoDB Atlas API Documentation](https://docs.atlas.mongodb.com/api/)
-- Check [Britive Documentation](https://docs.britive.com/)
+- [MongoDB Atlas Administration API v2](https://www.mongodb.com/docs/atlas/reference/api-resources-spec/v2/)
+- [MongoDB Atlas OAuth 2.0 Service Accounts](https://www.mongodb.com/docs/atlas/atlas-ui/service-accounts/)
+- [Britive Access Broker Documentation](https://docs.britive.com/)
+- [Britive Resource Manager](https://docs.britive.com/docs/resource-manager)
 
 ---
 
-**Security Notice**: Never commit credentials or sensitive information to this repository. Always use environment variables or secure secret management solutions.
+**Security Notice:** Never commit credentials or API keys to this repository. Always store secrets in Britive's encrypted variable store or your organization's secret management solution.
 
+---
 
-
-** Follwoing vides show Britive JIT access to elevate a user permission to dbAdmin role. And then Britive checkin process remove or revoke the access back to read mode in MongoDB Atlas. 
+The following video demonstrates Britive JIT access elevating a user to the `dbAdmin` role, and the checkin process revoking access automatically.
 
 https://youtu.be/rBagcOYXzhw
 
-Resoruce Type contains Checkout and Checkin Scripts
+<img width="806" height="479" alt="Britive Resource Type with Checkout and Checkin Scripts" src="https://github.com/user-attachments/assets/8c493f86-6bbf-427f-bb65-d26af732555f" />
 
-<img width="806" height="479" alt="image" src="https://github.com/user-attachments/assets/8c493f86-6bbf-427f-bb65-d26af732555f" />
+<img width="1038" height="630" alt="Checkout - dbAdmin role granted" src="https://github.com/user-attachments/assets/71ce7571-e85c-475a-926e-21c97b67bbac" />
 
---
+<img width="1038" height="630" alt="Checkin - access revoked" src="https://github.com/user-attachments/assets/f48f36da-c47e-4d7e-9580-27ac50e0fcad" />
 
-<img width="1038" height="630" alt="image" src="https://github.com/user-attachments/assets/71ce7571-e85c-475a-926e-21c97b67bbac" />
-
---
-
-<img width="1038" height="630" alt="image" src="https://github.com/user-attachments/assets/f48f36da-c47e-4d7e-9580-27ac50e0fcad" />
-
---
-
-<img width="509" height="677" alt="Access Broker Resource" src="https://github.com/user-attachments/assets/3c9c8d29-f221-4685-9cb1-603870243a2f" />
-
-
+<img width="509" height="677" alt="Access Broker Resource configuration" src="https://github.com/user-attachments/assets/3c9c8d29-f221-4685-9cb1-603870243a2f" />
