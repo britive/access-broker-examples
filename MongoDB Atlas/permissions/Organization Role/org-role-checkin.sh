@@ -11,12 +11,12 @@
 #
 # Flow      : Obtain token → Find user in org → Remove JIT role → PATCH
 #
-# Variables : Substituted by the Britive Access Broker before execution.
-#   {{client_id}}      - Atlas OAuth2 Service Account client ID
-#   {{client_secret}}  - Atlas OAuth2 Service Account client secret
-#   {{org_id}}         - MongoDB Atlas organization ID
-#   {{atlas_username}} - Atlas username (must match the checkout value)
-#   {{org_role}}       - Org role to revoke (must match the checkout role)
+# Variables : Read from environment variables injected by the Britive Access Broker.
+#   client_id      - Atlas OAuth2 Service Account client ID
+#   client_secret  - Atlas OAuth2 Service Account client secret
+#   org_id         - MongoDB Atlas organization ID
+#   atlas_username - Atlas username (must match the checkout value)
+#   org_role       - Org role to revoke (must match the checkout role)
 #
 # Exit codes:
 #   0 - Role revoked successfully
@@ -36,15 +36,27 @@ for cmd in curl jq base64 tr; do
 done
 
 # ---------------------------------------------------------------------------
-# Configuration — values are injected by the Britive broker at runtime.
+# Configuration — read from environment variables set by the Britive broker.
 # Never log CLIENT_SECRET.
 # ---------------------------------------------------------------------------
-CLIENT_ID="{{client_id}}"
-CLIENT_SECRET="{{client_secret}}"
-ORG_ID="{{org_id}}"
-ATLAS_USERNAME="{{atlas_username}}"
-ORG_ROLE="{{org_role}}"
+CLIENT_ID="${client_id}"
+CLIENT_SECRET="${client_secret}"
+ORG_ID="${org_id}"
+ATLAS_USERNAME="${atlas_username}"
+ORG_ROLE="${org_role}"
 BASE_URL="https://cloud.mongodb.com"
+
+# Validate all required variables are present
+MISSING=()
+[ -z "${CLIENT_ID}" ]      && MISSING+=("client_id")
+[ -z "${CLIENT_SECRET}" ]  && MISSING+=("client_secret")
+[ -z "${ORG_ID}" ]         && MISSING+=("org_id")
+[ -z "${ATLAS_USERNAME}" ] && MISSING+=("atlas_username")
+[ -z "${ORG_ROLE}" ]       && MISSING+=("org_role")
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  echo "ERROR: Missing required environment variables: ${MISSING[*]}"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Temporary file — unique per invocation to prevent concurrent session races.

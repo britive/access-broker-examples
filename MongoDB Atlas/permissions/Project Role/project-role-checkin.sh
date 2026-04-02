@@ -14,12 +14,12 @@
 # Flow      : Obtain token → Look up user ID → Remove role (:removeRole) →
 #             If last role: delete user from project
 #
-# Variables : Substituted by the Britive Access Broker before execution.
-#   {{client_id}}      - Atlas OAuth2 Service Account client ID
-#   {{client_secret}}  - Atlas OAuth2 Service Account client secret
-#   {{project_id}}     - MongoDB Atlas project (group) ID
-#   {{atlas_username}} - Atlas username (must match the checkout value)
-#   {{project_role}}   - Project role to revoke (must match checkout role)
+# Variables : Read from environment variables injected by the Britive Access Broker.
+#   client_id      - Atlas OAuth2 Service Account client ID
+#   client_secret  - Atlas OAuth2 Service Account client secret
+#   project_id     - MongoDB Atlas project (group) ID
+#   atlas_username - Atlas username (must match the checkout value)
+#   project_role   - Project role to revoke (must match checkout role)
 #
 # Exit codes:
 #   0 - Role revoked successfully
@@ -39,15 +39,27 @@ for cmd in curl jq base64 tr; do
 done
 
 # ---------------------------------------------------------------------------
-# Configuration — values are injected by the Britive broker at runtime.
+# Configuration — read from environment variables set by the Britive broker.
 # Never log CLIENT_SECRET.
 # ---------------------------------------------------------------------------
-CLIENT_ID="{{client_id}}"
-CLIENT_SECRET="{{client_secret}}"
-PROJECT_ID="{{project_id}}"
-ATLAS_USERNAME="{{atlas_username}}"
-PROJECT_ROLE="{{project_role}}"
+CLIENT_ID="${client_id}"
+CLIENT_SECRET="${client_secret}"
+PROJECT_ID="${project_id}"
+ATLAS_USERNAME="${atlas_username}"
+PROJECT_ROLE="${project_role}"
 BASE_URL="https://cloud.mongodb.com"
+
+# Validate all required variables are present
+MISSING=()
+[ -z "${CLIENT_ID}" ]      && MISSING+=("client_id")
+[ -z "${CLIENT_SECRET}" ]  && MISSING+=("client_secret")
+[ -z "${PROJECT_ID}" ]     && MISSING+=("project_id")
+[ -z "${ATLAS_USERNAME}" ] && MISSING+=("atlas_username")
+[ -z "${PROJECT_ROLE}" ]   && MISSING+=("project_role")
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  echo "ERROR: Missing required environment variables: ${MISSING[*]}"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Temporary files — unique per invocation to prevent concurrent session races.
@@ -112,7 +124,7 @@ REMOVE_RESP=$(curl -s -o "${TMPFILE}" -w "%{http_code}" -X POST \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Accept: application/vnd.atlas.2025-02-19+json, */*" \
   -H "Content-Type: application/json" \
-  -d "{\"groupRoles\": [\"${PROJECT_ROLE}\"]}")
+  -d "{\"groupRole\": \"${PROJECT_ROLE}\"}")
 
 if [[ "${REMOVE_RESP}" -ge 200 && "${REMOVE_RESP}" -lt 300 ]]; then
   echo "SUCCESS: Revoked project role '${PROJECT_ROLE}' from '${ATLAS_USERNAME}'."

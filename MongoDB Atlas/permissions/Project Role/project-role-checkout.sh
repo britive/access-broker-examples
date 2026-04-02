@@ -15,13 +15,13 @@
 # Flow      : Obtain token → POST user to project (handles existing user) →
 #             If already in project: look up user ID → add role via :addRole
 #
-# Variables : Substituted by the Britive Access Broker before execution.
-#   {{client_id}}      - Atlas OAuth2 Service Account client ID
-#   {{client_secret}}  - Atlas OAuth2 Service Account client secret
-#   {{project_id}}     - MongoDB Atlas project (group) ID
-#   {{atlas_username}} - Atlas username (usually the user's email address)
-#   {{project_role}}   - Project role to grant (e.g. GROUP_READ_ONLY,
-#                        GROUP_DATA_ACCESS_READ_WRITE, GROUP_OWNER)
+# Variables : Read from environment variables injected by the Britive Access Broker.
+#   client_id      - Atlas OAuth2 Service Account client ID
+#   client_secret  - Atlas OAuth2 Service Account client secret
+#   project_id     - MongoDB Atlas project (group) ID
+#   atlas_username - Atlas username (usually the user's email address)
+#   project_role   - Project role to grant (e.g. GROUP_READ_ONLY,
+#                    GROUP_DATA_ACCESS_READ_WRITE, GROUP_OWNER)
 #
 # Exit codes:
 #   0 - Role granted successfully
@@ -41,15 +41,28 @@ for cmd in curl jq base64 tr; do
 done
 
 # ---------------------------------------------------------------------------
-# Configuration — values are injected by the Britive broker at runtime.
+# Configuration — read from environment variables set by the Britive broker.
 # Never log CLIENT_SECRET.
 # ---------------------------------------------------------------------------
-CLIENT_ID="{{client_id}}"
-CLIENT_SECRET="{{client_secret}}"
-PROJECT_ID="{{project_id}}"
-ATLAS_USERNAME="{{atlas_username}}"
-PROJECT_ROLE="{{project_role}}"
+CLIENT_ID="${client_id}"
+CLIENT_SECRET="${client_secret}"
+PROJECT_ID="${project_id}"
+ATLAS_USERNAME="${atlas_username}"
+PROJECT_ROLE="${project_role}"
+URL="${url}"
 BASE_URL="https://cloud.mongodb.com"
+
+# Validate all required variables are present
+MISSING=()
+[ -z "${CLIENT_ID}" ]      && MISSING+=("client_id")
+[ -z "${CLIENT_SECRET}" ]  && MISSING+=("client_secret")
+[ -z "${PROJECT_ID}" ]     && MISSING+=("project_id")
+[ -z "${ATLAS_USERNAME}" ] && MISSING+=("atlas_username")
+[ -z "${PROJECT_ROLE}" ]   && MISSING+=("project_role")
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  echo "ERROR: Missing required environment variables: ${MISSING[*]}"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Temporary files — unique per invocation to prevent concurrent session races.
@@ -62,7 +75,7 @@ trap 'rm -f "$TMPFILE_ADD" "$TMPFILE"' EXIT
 # ---------------------------------------------------------------------------
 # Step 1: Obtain a short-lived OAuth2 access token.
 # ---------------------------------------------------------------------------
-echo "INFO: Obtaining Atlas OAuth2 token..."
+# echo "INFO: Obtaining Atlas OAuth2 token..."
 
 TOKEN=$(curl -s -X POST "${BASE_URL}/api/oauth/token" \
   -H "Authorization: Basic $(printf '%s:%s' "${CLIENT_ID}" "${CLIENT_SECRET}" | base64 | tr -d '\n')" \
@@ -75,7 +88,7 @@ if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
   exit 1
 fi
 
-echo "INFO: Token obtained successfully."
+# echo "INFO: Token obtained successfully."
 
 # ---------------------------------------------------------------------------
 # Step 2: Attempt to add the user to the project with the requested role.
@@ -83,7 +96,7 @@ echo "INFO: Token obtained successfully."
 # project member — we handle that by using the :addRole endpoint instead.
 # Any other non-2xx response is a real error.
 # ---------------------------------------------------------------------------
-echo "INFO: Adding '${ATLAS_USERNAME}' to project '${PROJECT_ID}' with role '${PROJECT_ROLE}'..."
+# echo "INFO: Adding '${ATLAS_USERNAME}' to project '${PROJECT_ID}' with role '${PROJECT_ROLE}'..."
 
 ADD_RESP=$(curl -s -o "${TMPFILE_ADD}" -w "%{http_code}" -X POST \
   "${BASE_URL}/api/atlas/v2/groups/${PROJECT_ID}/users" \
@@ -93,14 +106,14 @@ ADD_RESP=$(curl -s -o "${TMPFILE_ADD}" -w "%{http_code}" -X POST \
   -d "{\"username\": \"${ATLAS_USERNAME}\", \"roles\": [\"${PROJECT_ROLE}\"]}")
 
 if [[ "${ADD_RESP}" -ge 200 && "${ADD_RESP}" -lt 300 ]]; then
-  echo "SUCCESS: Added '${ATLAS_USERNAME}' to project with role '${PROJECT_ROLE}'."
+  echo "{\"url\": \"${URL}\", \"message\": \"Granted project role '${PROJECT_ROLE}' to '${ATLAS_USERNAME}'.\"}"
   exit 0
 fi
 
 if [[ "${ADD_RESP}" -eq 400 ]]; then
   ERROR_CODE=$(jq -r '.errorCode // empty' "${TMPFILE_ADD}")
   if [ "${ERROR_CODE}" = "USER_ALREADY_IN_GROUP" ]; then
-    echo "INFO: User is already a project member — will append role via :addRole endpoint."
+    : # echo "INFO: User is already a project member — will append role via :addRole endpoint."
   else
     echo "ERROR: HTTP 400 adding user to project — ${ERROR_CODE}."
     echo "Response: $(cat "${TMPFILE_ADD}")"
@@ -116,7 +129,7 @@ fi
 # Step 3: User already exists in the project — look up their internal user ID
 # so we can use the atomic :addRole endpoint.
 # ---------------------------------------------------------------------------
-echo "INFO: Looking up user ID for '${ATLAS_USERNAME}' in project '${PROJECT_ID}'..."
+# echo "INFO: Looking up user ID for '${ATLAS_USERNAME}' in project '${PROJECT_ID}'..."
 
 USER_LOOKUP_CODE=$(curl -s -o "${TMPFILE}" -w "%{http_code}" \
   "${BASE_URL}/api/atlas/v2/groups/${PROJECT_ID}/users?username=${ATLAS_USERNAME}" \
@@ -136,26 +149,26 @@ if [ -z "${USER_ID}" ]; then
   exit 1
 fi
 
-echo "INFO: Found user ID '${USER_ID}'."
+# echo "INFO: Found user ID '${USER_ID}'."
 
 # ---------------------------------------------------------------------------
 # Step 4: Atomically add the project role using the :addRole endpoint.
 # A 409 means the user already has the role — treated as success (idempotent).
 # ---------------------------------------------------------------------------
-echo "INFO: Adding role '${PROJECT_ROLE}' to existing project member '${ATLAS_USERNAME}'..."
+# echo "INFO: Adding role '${PROJECT_ROLE}' to existing project member '${ATLAS_USERNAME}'..."
 
 ADD_ROLE_RESP=$(curl -s -o "${TMPFILE}" -w "%{http_code}" -X POST \
   "${BASE_URL}/api/atlas/v2/groups/${PROJECT_ID}/users/${USER_ID}:addRole" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Accept: application/vnd.atlas.2025-02-19+json, */*" \
   -H "Content-Type: application/json" \
-  -d "{\"groupRoles\": [\"${PROJECT_ROLE}\"]}")
+  -d "{\"groupRole\": \"${PROJECT_ROLE}\"}")
 
 if [[ "${ADD_ROLE_RESP}" -ge 200 && "${ADD_ROLE_RESP}" -lt 300 ]]; then
-  echo "SUCCESS: Granted project role '${PROJECT_ROLE}' to '${ATLAS_USERNAME}'."
+  echo "{\"url\": \"${URL}\", \"message\": \"Granted project role '${PROJECT_ROLE}' to '${ATLAS_USERNAME}'.\"}"
 elif [[ "${ADD_ROLE_RESP}" -eq 409 ]]; then
   # User already holds this role — idempotent, not an error
-  echo "SUCCESS: User '${ATLAS_USERNAME}' already has role '${PROJECT_ROLE}' — no change needed."
+  echo "{\"url\": \"${URL}\", \"message\": \"User '${ATLAS_USERNAME}' already has role '${PROJECT_ROLE}' — no change needed.\"}"
 else
   echo "ERROR: :addRole failed with HTTP ${ADD_ROLE_RESP}."
   echo "Response: $(cat "${TMPFILE}")"
