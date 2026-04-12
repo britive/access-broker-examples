@@ -1,3 +1,5 @@
+### BETA ###
+
 # k8s-exec-bridge
 
 Checkout / checkin scripts for JIT Kubernetes container exec access via the
