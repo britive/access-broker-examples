@@ -86,22 +86,25 @@ AUTH_KEYS="${HOME_DIR}/.ssh/authorized_keys"
 
 # --- Remove the injected key (matched by the bridge:<transaction_id> comment) ---
 if run_root test -f "$AUTH_KEYS"; then
-    run_root grep -vF "$MARKER" "$AUTH_KEYS" | run_root tee "${AUTH_KEYS}.tmp" >/dev/null
-    run_root mv "${AUTH_KEYS}.tmp" "$AUTH_KEYS"
+    BEFORE=$(run_root cat "$AUTH_KEYS" | wc -l)
+    # grep -v returns exit 1 when no lines remain; ignore that with || true
+    run_root cat "$AUTH_KEYS" | grep -vF "$MARKER" > /tmp/ak_clean.tmp || true
+    run_root cp /tmp/ak_clean.tmp "$AUTH_KEYS"
+    rm -f /tmp/ak_clean.tmp
     run_root chmod 600 "$AUTH_KEYS"
     run_root chown "${TARGET_USER}:" "$AUTH_KEYS"
-    echo "Removed key with marker $MARKER for user $TARGET_USER"
+    AFTER=$(run_root cat "$AUTH_KEYS" | wc -l)
+    REMOVED=$((BEFORE - AFTER))
+    echo "authorized_keys: removed $REMOVED key(s) matching '$MARKER' for $TARGET_USER ($BEFORE -> $AFTER lines)"
 else
-    echo "No authorized_keys file found for $TARGET_USER"
+    echo "No authorized_keys file found for $TARGET_USER — skipping"
 fi
 
-# --- Remove sudoers entry if it was created during checkout ---
-if [ "$SUDO" = "1" ]; then
-    SUDOERS_FILE="/etc/sudoers.d/bridge-${TRANSACTION_ID}"
-    if run_root test -f "$SUDOERS_FILE"; then
-        run_root rm -f "$SUDOERS_FILE"
-        echo "Removed sudoers entry $SUDOERS_FILE"
-    fi
+# --- Always remove sudoers entry for this transaction (cleanup stale entries too) ---
+SUDOERS_FILE="/etc/sudoers.d/bridge-${TRANSACTION_ID}"
+if run_root test -f "$SUDOERS_FILE"; then
+    run_root rm -f "$SUDOERS_FILE"
+    echo "Removed sudoers entry $SUDOERS_FILE"
 fi
 
 # --- Optionally delete the user account ---
