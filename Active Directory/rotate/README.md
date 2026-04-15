@@ -1,142 +1,202 @@
-## Active Directory Password Rotation
+# Active Directory Password Rotation
 
-This directory contains PowerShell scripts used by the Britive broker to rotate passwords for Active Directory accounts as part of a checkout/checkin workflow.
+This directory contains PowerShell scripts used by the **Britive Access Broker** to rotate passwords for Active Directory accounts as part of a checkout/checkin workflow. Each script targets a different post-rotation scenario: standalone AD reset, Windows service credential update, IIS app pool credential update, or AWS Secrets Manager sync.
 
-### Script: `rotate-ad-account.ps1`
+## Scripts at a Glance
 
-Resets the password for a specified AD account, unlocks it if locked, and disables the "change password at next logon" flag.
+| Script | What it does | Extra dependencies |
+|---|---|---|
+| `rotate-ad-account.ps1` | Resets the AD password only | None |
+| `rotate-ad-service-account.ps1` | Resets AD password + updates a Windows service on a remote server | WinRM/PSRemoting |
+| `rotate-ad-iis-account.ps1` | Resets AD password + updates an IIS app pool on a remote server | WinRM/PSRemoting, WebAdministration module |
+| `rotate-ad-account-aws-secret.ps1` | Resets AD password + syncs the credential to AWS Secrets Manager | AWS CLI v2 |
+
+All scripts share the same core flow:
+
+1. Validate environment variables (fail-fast if missing)
+2. Import the `ActiveDirectory` PowerShell module
+3. Confirm the target user exists in AD
+4. Reset the password via `Set-ADAccountPassword`
+5. Unlock the account and disable "change password at next logon"
+6. Perform the post-rotation action (if applicable)
+
+---
+
+## Common Prerequisites
+
+- **Windows PowerShell 5.1** or later
+- **RSAT Active Directory module** installed on the broker machine (see [parent README](../README.md) for installation)
+- The **broker service account** must have the `Reset Password` permission on the target OU in AD
+
+---
+
+## Script Details
+
+### `rotate-ad-account.ps1`
+
+Resets the password for a specified AD account, unlocks it, and disables the "change password at next logon" flag.
 
 #### Environment Variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `AD_TARGET_USER` | Yes | SamAccountName of the AD account to rotate (e.g., `jdoe` or `svc-app01`) |
-| `AD_NEW_PASSWORD` | Yes | The new password to set on the account |
-
-#### How It Works
-
-1. Validates that both `AD_TARGET_USER` and `AD_NEW_PASSWORD` environment variables are set (fails immediately if not).
-2. Imports the `ActiveDirectory` PowerShell module.
-3. Confirms the target user exists in AD before attempting any changes.
-4. Resets the account password using `Set-ADAccountPassword`.
-5. Unlocks the account in case it was locked out.
-6. Disables "change password at next logon" so the new credential is immediately usable.
-
-#### Fail-Fast Behavior
-
-- `$ErrorActionPreference = 'Stop'` promotes all non-terminating errors to terminating errors.
-- Missing environment variables cause an immediate failure before any AD operations run.
-- The target user is verified with `Get-ADUser` before the password reset is attempted.
-- All critical AD operations use `-ErrorAction Stop` to halt on failure.
-
-#### Security Notes
-
-- The password is never written to stdout or logs.
-- The new password is handled as a `SecureString` for the AD operation.
-
-#### Prerequisites
-
-- Windows PowerShell 5.1 or later
-- RSAT Active Directory module installed (see [parent README](../README.md) for installation instructions)
-- The broker service account must have permission to reset passwords for the target accounts
+| `AD_TARGET_USER` | Yes | SamAccountName of the AD account (e.g. `jdoe`, `svc-app01`) |
+| `AD_NEW_PASSWORD` | Yes | The new password to set |
 
 ---
 
-### Script: `rotate-ad-service-account.ps1`
+### `rotate-ad-service-account.ps1`
 
-Extends the basic password rotation to also update the logon credential on a Windows service running on a remote server via PSRemoting (WinRM), and optionally restarts the service so the new password takes effect immediately.
+Extends the basic rotation to also update the logon credential on a **Windows service** running on a remote server via PSRemoting (WinRM), and optionally restarts the service so the new password takes effect immediately.
 
 #### Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `AD_TARGET_USER` | Yes | | SamAccountName of the service account (e.g., `svc-app01`) |
-| `AD_NEW_PASSWORD` | Yes | | The new password to set on the account |
-| `AD_TARGET_SERVER` | Yes | | Hostname or FQDN of the Windows server running the service |
-| `AD_SERVICE_NAME` | Yes | | Name of the Windows service to update (e.g., `MyAppService`) |
-| `AD_RESTART_SERVICE` | No | `true` | Set to `false` to skip restarting the service after credential update |
+| `AD_TARGET_USER` | Yes | | SamAccountName of the service account |
+| `AD_NEW_PASSWORD` | Yes | | The new password to set |
+| `AD_TARGET_SERVER` | Yes | | Hostname or FQDN of the server running the service |
+| `AD_SERVICE_NAME` | Yes | | Windows service name (e.g. `MyAppService`) |
+| `AD_RESTART_SERVICE` | No | `true` | Set to `false` to skip restarting the service |
 
-#### How It Works
+#### Additional Prerequisites
 
-1. Validates all required environment variables (fails immediately if any are missing).
-2. Imports the `ActiveDirectory` PowerShell module.
-3. Confirms the target user exists in AD and retrieves the domain NetBIOS name for the `DOMAIN\username` format.
-4. Rotates the AD password, unlocks the account, and disables change-at-logon.
-5. Connects to the remote server via `Invoke-Command` (PSRemoting/WinRM).
-6. Verifies the target service exists on the remote server.
-7. Updates the service logon credential using `sc.exe config`.
-8. Optionally stops and restarts the service (with 60-second timeouts for each transition).
-9. Verifies the service is running after restart.
-
-#### Fail-Fast Behavior
-
-- `$ErrorActionPreference = 'Stop'` is set both locally and inside the remote session.
-- All four required environment variables are validated before any AD or remote operations run.
-- The target user is verified with `Get-ADUser` before the password reset.
-- The service is verified with `Get-Service` on the remote server before updating credentials.
-- `sc.exe` exit code is checked explicitly — non-zero exit codes throw an error.
-- Service stop/start operations have 60-second timeouts to prevent indefinite hangs.
-
-#### Security Notes
-
-- The password is never written to stdout or logs.
-- The password is passed to the remote session via `-ArgumentList`, not embedded in the script block.
-
-#### Prerequisites
-
-- Windows PowerShell 5.1 or later
-- RSAT Active Directory module installed (see [parent README](../README.md) for installation instructions)
-- The broker service account must have permission to reset passwords for the target accounts
-- WinRM/PSRemoting must be enabled on the target server
-- The broker service account must have remote admin access on the target server
+- WinRM/PSRemoting enabled on the target server
+- Broker service account has remote admin access on the target server
 
 ---
 
-### Script: `rotate-ad-iis-account.ps1`
+### `rotate-ad-iis-account.ps1`
 
-Extends the basic password rotation to also update the identity credential on an IIS Application Pool running on a remote server via PSRemoting (WinRM), and optionally recycles the app pool so the new password takes effect immediately.
+Extends the basic rotation to also update the identity credential on an **IIS Application Pool** running on a remote server via PSRemoting (WinRM), and optionally recycles the app pool.
 
 #### Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `AD_TARGET_USER` | Yes | | SamAccountName of the service account (e.g., `svc-webapp01`) |
-| `AD_NEW_PASSWORD` | Yes | | The new password to set on the account |
+| `AD_TARGET_USER` | Yes | | SamAccountName of the service account |
+| `AD_NEW_PASSWORD` | Yes | | The new password to set |
 | `AD_TARGET_SERVER` | Yes | | Hostname or FQDN of the IIS server |
-| `AD_APPPOOL_NAME` | Yes | | Name of the IIS Application Pool to update (e.g., `DefaultAppPool`) |
-| `AD_RECYCLE_APPPOOL` | No | `true` | Set to `false` to skip recycling the app pool after credential update |
+| `AD_APPPOOL_NAME` | Yes | | IIS Application Pool name (e.g. `DefaultAppPool`) |
+| `AD_RECYCLE_APPPOOL` | No | `true` | Set to `false` to skip recycling the app pool |
 
-#### How It Works
+#### Additional Prerequisites
 
-1. Validates all required environment variables (fails immediately if any are missing).
-2. Imports the `ActiveDirectory` PowerShell module.
-3. Confirms the target user exists in AD and retrieves the domain NetBIOS name for the `DOMAIN\username` format.
-4. Rotates the AD password, unlocks the account, and disables change-at-logon.
-5. Connects to the remote IIS server via `Invoke-Command` (PSRemoting/WinRM).
-6. Imports the `WebAdministration` module on the remote server.
-7. Verifies the target app pool exists.
-8. Updates the app pool identity: sets `identityType` to SpecificUser, and updates `userName` and `password`.
-9. Optionally recycles the app pool using `Restart-WebAppPool`.
-10. Verifies the app pool is running after recycle.
+- WinRM/PSRemoting enabled on the target IIS server
+- Broker service account has remote admin access on the target IIS server
+- `WebAdministration` PowerShell module installed on the IIS server
 
-#### Fail-Fast Behavior
+---
 
-- `$ErrorActionPreference = 'Stop'` is set both locally and inside the remote session.
-- All four required environment variables are validated before any AD or remote operations run.
-- The target user is verified with `Get-ADUser` before the password reset.
-- The app pool is verified with `Get-Item` on the `IIS:\AppPools\` path before updating credentials.
-- App pool state is checked after recycle to confirm it restarted successfully.
+### `rotate-ad-account-aws-secret.ps1`
 
-#### Security Notes
+Extends the basic rotation to also **sync the new credential to AWS Secrets Manager**. After the AD password is reset, the script fetches the existing secret JSON, patches the password field, and writes it back. All other fields in the secret (e.g. `sAMAccountName`, `host`, `port`) are preserved.
 
-- The password is never written to stdout or logs.
-- The password is passed to the remote session via `-ArgumentList`, not embedded in the script block.
+#### Environment Variables
 
-#### Prerequisites
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `AD_TARGET_USER` | Yes | | SamAccountName of the AD account |
+| `AD_NEW_PASSWORD` | Yes | | The new password to set |
+| `AWS_SECRET_ARN` | Yes | | Full ARN of the Secrets Manager secret |
+| `AWS_SECRET_KEY` | No | `password` | JSON key name that holds the password field in the secret |
 
-- Windows PowerShell 5.1 or later
-- RSAT Active Directory module installed (see [parent README](../README.md) for installation instructions)
-- The broker service account must have permission to reset passwords for the target accounts
-- WinRM/PSRemoting must be enabled on the target IIS server
-- The broker service account must have remote admin access on the target IIS server
-- The `WebAdministration` PowerShell module must be installed on the target IIS server
+#### Additional Prerequisites
+
+- **AWS CLI v2** installed on the broker machine. The script resolves `aws.exe` by scanning standard install locations, so it works even when the broker service account's PATH does not include the CLI directory.
+- The **EC2 instance role** (or other AWS credential source) must have the following permissions on the target secret:
+  ```json
+  {
+      "Effect": "Allow",
+      "Action": [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue"
+      ],
+      "Resource": "<your-secret-arn>"
+  }
+  ```
+
+#### Expected Secret Format
+
+The target secret must be a JSON string. The script reads it, updates the key specified by `AWS_SECRET_KEY` (default `password`), and writes the full object back. Example:
+
+```json
+{
+    "sAMAccountName": "svc_app@ag.local",
+    "password": "current-password-here"
+}
+```
+
+#### Security Hardening
+
+This script includes additional protections since it handles credentials across two systems:
+
+| Protection | Detail |
+|---|---|
+| Env var cleared immediately | `AD_NEW_PASSWORD` is removed from the process environment right after being read into a variable, so child processes (including the AWS CLI) never inherit it |
+| No secrets on the command line | The updated secret JSON is written to a temp file and passed via `file://` to the AWS CLI. This prevents the password from appearing in the OS process list |
+| Temp file ACL-locked | The temp file is restricted to the current user only (inheritance disabled, all other ACEs removed) |
+| Temp file zeroed before deletion | The file is overwritten with null bytes before being deleted, reducing the window for on-disk recovery |
+| SecureString disposed | The `SecureString` holding the AD password is explicitly disposed to release protected memory |
+| All variables cleaned up | A `finally` block zeros out and removes all sensitive string variables (`NewPassword`, `updatedSecret`, `getResult`) regardless of success or failure |
+| UTF-8 without BOM | The temp file is written with `UTF8Encoding($false)` to avoid prepending a BOM (`EF BB BF`) which would corrupt the JSON |
+| Unicode unescape | PowerShell 5.1's `ConvertTo-Json` escapes `< > & '` as `\uXXXX` sequences. The script unescapes them so the password is stored verbatim |
+
+---
+
+## Troubleshooting
+
+### "The term 'aws' is not recognized"
+
+The broker service runs scripts under an AD service account whose `PATH` may not include the AWS CLI install directory. The `rotate-ad-account-aws-secret.ps1` script handles this automatically by scanning well-known install paths (`C:\Program Files\Amazon\AWSCLIV2\aws.exe` etc.). If the error persists, verify the CLI is installed:
+
+```powershell
+Test-Path "C:\Program Files\Amazon\AWSCLIV2\aws.exe"
+```
+
+### Secret value has `\u003c` or BOM garbage (`ï»¿`)
+
+This was a known issue in earlier versions of the script caused by PowerShell 5.1's `ConvertTo-Json` Unicode escaping and .NET's default UTF-8 BOM encoding. The current version of `rotate-ad-account-aws-secret.ps1` handles both. If you see this on an older copy of the script, re-deploy the latest version.
+
+### PSRemoting / WinRM connection failures
+
+For the service account and IIS scripts that connect to remote servers:
+
+- Verify WinRM is running on the target: `Test-WSMan -ComputerName <server>`
+- Verify the broker service account is in the local Administrators group on the target server
+- If using cross-domain or workgroup servers, check `TrustedHosts` configuration
+- Verify no firewall rules are blocking TCP 5985 (HTTP) or 5986 (HTTPS)
+
+### AD password changed but downstream service/app pool still uses old password
+
+- For `rotate-ad-service-account.ps1`: ensure `AD_RESTART_SERVICE` is not set to `false`
+- For `rotate-ad-iis-account.ps1`: ensure `AD_RECYCLE_APPPOOL` is not set to `false`
+- If the service fails to start with the new password, verify the AD account is not locked and the password meets domain complexity requirements
+
+### Service fails to start after rotation
+
+If `sc.exe config` succeeded but the service won't start:
+
+1. Check the Windows Event Log on the target server (`System` and `Application` logs)
+2. Verify the service account has "Log on as a service" rights (Local Security Policy > User Rights Assignment)
+3. Confirm the account is not disabled or locked in AD
+
+---
+
+## Fail-Fast Behavior (All Scripts)
+
+All scripts enforce strict error handling:
+
+- `$ErrorActionPreference = 'Stop'` promotes all non-terminating errors to terminating errors
+- Required environment variables are validated before any AD or remote operations run
+- The target user is verified with `Get-ADUser` before the password reset is attempted
+- All critical operations use `-ErrorAction Stop` to halt on failure
+- Exit code `0` on success, `1` on any failure
+
+---
+
+## Security Notes (All Scripts)
+
+- Passwords are **never written to stdout or logs** -- only the username and operation status are logged
+- The new password is handled as a `SecureString` for all AD operations
+- For remote scripts, the password is passed via `-ArgumentList`, not embedded in the script block
