@@ -56,10 +56,39 @@ try {
     $SecretArn   = $env:AWS_SECRET_ARN
     $SecretKey   = if ($env:AWS_SECRET_KEY) { $env:AWS_SECRET_KEY } else { "password" }
 
-    # Clear the password from the environment immediately after reading —
+    # Clear the password from the environment immediately after reading -
     # child processes spawned later (e.g. aws CLI) will not inherit it.
     [System.Environment]::SetEnvironmentVariable('AD_NEW_PASSWORD', $null, 'Process')
 
+    # ----------------------------------------------------------
+    # Resolve the AWS CLI path
+    # ----------------------------------------------------------
+    # The broker service runs as an AD service account whose PATH
+    # may not include the AWS CLI install directory. Look up the
+    # full path from the system-wide Program Files location and
+    # from the Machine-level PATH so the script works regardless
+    # of which account executes it.
+    $AwsCli = Get-Command aws -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty Source -First 1
+
+    if (-not $AwsCli) {
+        # Check well-known install locations
+        $candidates = @(
+            "$env:ProgramFiles\Amazon\AWSCLIV2\aws.exe",
+            "${env:ProgramFiles(x86)}\Amazon\AWSCLIV2\aws.exe",
+            "C:\Program Files\Amazon\AWSCLIV2\aws.exe",
+            "C:\Program Files (x86)\Amazon\AWSCLIV2\aws.exe"
+        )
+        foreach ($path in $candidates) {
+            if (Test-Path $path) { $AwsCli = $path; break }
+        }
+    }
+
+    if (-not $AwsCli) {
+        throw "AWS CLI not found. Install it or set its directory in the system PATH."
+    }
+
+    Write-Host "Using AWS CLI: $AwsCli"
     Write-Host "Starting password rotation for user: $TargetUser"
     Write-Host "Target secret ARN: $SecretArn"
 
@@ -103,7 +132,7 @@ try {
     # ----------------------------------------------------------
     Write-Host "Fetching current secret value from Secrets Manager..."
 
-    $getResult = aws secretsmanager get-secret-value `
+    $getResult = & $AwsCli secretsmanager get-secret-value `
         --secret-id $SecretArn `
         --query SecretString `
         --output text 2>&1
@@ -112,10 +141,17 @@ try {
         throw "Failed to retrieve secret from Secrets Manager: $getResult"
     }
 
-    # Parse the JSON secret, update the password field, re-serialize
+    # Parse the JSON secret, update the password field, re-serialize.
+    # PowerShell 5.1's ConvertTo-Json escapes <, >, &, ' as \uXXXX
+    # sequences (e.g. < becomes \u003c). We unescape them so the
+    # password is stored verbatim in Secrets Manager.
     $secretObj = $getResult | ConvertFrom-Json
     $secretObj.$SecretKey = $NewPassword
     $updatedSecret = $secretObj | ConvertTo-Json -Compress
+    $updatedSecret = [Regex]::Replace($updatedSecret, '\\u([0-9A-Fa-f]{4})', {
+        param($match)
+        [char][int]"0x$($match.Groups[1].Value)"
+    })
 
     # ----------------------------------------------------------
     # Write the updated secret JSON to a restricted temp file.
@@ -136,11 +172,15 @@ try {
     $acl.SetAccessRule($rule)
     Set-Acl -Path $TempSecretFile -AclObject $acl
 
-    [System.IO.File]::WriteAllText($TempSecretFile, $updatedSecret, [System.Text.Encoding]::UTF8)
+    # Use UTF-8 WITHOUT BOM. The default [System.Text.Encoding]::UTF8
+    # includes a BOM (EF BB BF) which prepends garbage chars to the
+    # JSON and breaks parsing in AWS Secrets Manager.
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($TempSecretFile, $updatedSecret, $utf8NoBom)
 
     Write-Host "Updating secret in Secrets Manager (key: '$SecretKey')..."
 
-    $putResult = aws secretsmanager put-secret-value `
+    $putResult = & $AwsCli secretsmanager put-secret-value `
         --secret-id $SecretArn `
         --secret-string "file://$TempSecretFile" 2>&1
 
@@ -157,7 +197,7 @@ catch {
 }
 finally {
     # ----------------------------------------------------------
-    # Always clean up — runs on success, failure, and termination
+    # Always clean up - runs on success, failure, and termination
     # ----------------------------------------------------------
 
     # Overwrite the temp file with zeros before deleting to prevent
