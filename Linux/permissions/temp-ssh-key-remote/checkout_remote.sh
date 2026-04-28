@@ -1,114 +1,101 @@
-#!/bin/bash
+#!/bin/sh
+set -eu
 
 # ==============================
 # Configurable Variables
 # ==============================
-USER_EMAIL=${BRITIVE_USER_EMAIL:-"test@example.com"}
+USER_EMAIL="${BRITIVE_USER_EMAIL:-}"
 USERNAME="${USER_EMAIL%%@*}"
-USERNAME="${USERNAME//[^a-zA-Z0-9]/}"
+USERNAME="$(printf '%s' "$USERNAME" | tr -cd 'a-zA-Z0-9')"
 
-TRX=${TRX:-"britive-trx-id"}  # Transaction ID of the checkout
-USER=${USERNAME}
-GROUP=${USERNAME}
-SUDO=${BRITIVE_SUDO:-"0"}
-HOME_ROOT=${BRITIVE_HOME_ROOT:-"home"}
-REMOTE_USER=${REMOTE_USER:-"ec2-user"}  # default AWS user
-REMOTE_HOST=${HOST}
-CONVERT_TO_PPK=${CONVERT_TO_PPK:-"1"}  # Set to "1" to include PPK format in output
+TRX="${TRX:-}"
+TARGET_USER="${USERNAME}"
+SUDO_FLAG="${BRITIVE_SUDO:-0}"
+REMOTE_USER="${REMOTE_USER:-britivebroker}"
+REMOTE_HOST="${BRITIVE_REMOTE_HOST:-${HOST:-}}"
+REMOTE_KEY="${REMOTE_KEY:-/home/britivebroker/.ssh/MYKEY.pem}"
 
-REMOTE_KEY="/home/britivebroker/MYKEY.pem"  # <-- Path to your AWS PEM file
+# ===== Fail-fast checks =====
+[ -z "$REMOTE_HOST" ]  && { echo "ERROR: REMOTE_HOST empty — set BRITIVE_REMOTE_HOST" >&2; exit 1; }
+[ -z "$USER_EMAIL" ]   && { echo "ERROR: BRITIVE_USER_EMAIL empty" >&2; exit 1; }
+[ -z "$TRX" ]          && { echo "ERROR: TRX empty" >&2; exit 1; }
+[ ! -f "$REMOTE_KEY" ] && { echo "ERROR: SSH key not found at $REMOTE_KEY" >&2; exit 1; }
 
+# ======================================
+# Generate keypair in secure temp dir
+# ======================================
+umask 077
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 
-# ==============================
-# Generate SSH keypair in temp location
-# ==============================
-TMP_DIR=$(mktemp -d)
-SSH_KEY_LOCAL="$TMP_DIR/britive-id_rsa"
-SSH_KEY_PUB="$TMP_DIR/britive-id_rsa.pub"
+SSH_KEY_LOCAL="$TMP_DIR/britive_key"
+SSH_KEY_PUB="$TMP_DIR/britive_key.pub"
 
-ssh-keygen -q -N '' -t rsa -C "$USER_EMAIL" -f "$SSH_KEY_LOCAL"
-#echo "✅ Generated new keypair (not stored permanently)"
+ssh-keygen -q -N '' -t ed25519 -C "$USER_EMAIL" -f "$SSH_KEY_LOCAL"
 
-# ==============================
-# Create user and setup on remote server
-# ==============================
-ssh -i "$REMOTE_KEY" -o IdentitiesOnly=yes "$REMOTE_USER@$REMOTE_HOST" bash -s <<EOF
-set -e
-
-USER="$USER"
-GROUP="$GROUP"
-SUDO="$SUDO"
-HOME_ROOT="$HOME_ROOT"
-SSH_PATH=/${HOME_ROOT}/\${USER}/.ssh
-
-if ! id "\$USER" &>/dev/null; then
-  sudo useradd -m "\$USER"
-fi
-
-sudo mkdir -p "\$SSH_PATH"
-sudo chmod 700 "\$SSH_PATH"
-sudo chown "\$USER:\$GROUP" "\$SSH_PATH"
-
-if [ "\$SUDO" != "0" ]; then
-  echo "\$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/\$USER >/dev/null
-  sudo chmod 440 /etc/sudoers.d/\$USER
-fi
-EOF
+PUBKEY_B64="$(base64 < "$SSH_KEY_PUB" | tr -d '\n')"
 
 # ==============================
-# Append public key with TRX marker and push it to remote
+# Provision user and key on remote host
 # ==============================
-PUB_KEY_WITH_MARKER="$(cat "$SSH_KEY_PUB") # britive-$TRX"
+ssh \
+    -i "$REMOTE_KEY" \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    "$REMOTE_USER@$REMOTE_HOST" \
+    sh -s -- "$TARGET_USER" "$PUBKEY_B64" "$SUDO_FLAG" "$TRX" <<'REMOTE'
+set -eu
+TARGET_USER="$1"
+PUBKEY_B64="$2"
+SUDO_FLAG="$3"
+TRX="$4"
+PUBKEY="$(printf '%s' "$PUBKEY_B64" | base64 -d)"
 
-echo "$PUB_KEY_WITH_MARKER" > "$TMP_DIR/britive-id_rsa_marker.pub"
-
-scp -q -i "$REMOTE_KEY" -o IdentitiesOnly=yes "$TMP_DIR/britive-id_rsa_marker.pub" "$REMOTE_USER@$REMOTE_HOST:/tmp/britive-id_rsa_marker.pub"
-
-ssh -i "$REMOTE_KEY" -o IdentitiesOnly=yes "$REMOTE_USER@$REMOTE_HOST" bash -s <<EOF
-set -e
-
-USER="$USER"
-HOME_ROOT="$HOME_ROOT"
-SSH_PATH=/${HOME_ROOT}/\${USER}/.ssh
-
-sudo bash -c "cat /tmp/britive-id_rsa_marker.pub >> \$SSH_PATH/authorized_keys"
-sudo rm -f /tmp/britive-id_rsa_marker.pub
-sudo chmod 600 "\$SSH_PATH/authorized_keys"
-sudo chown "\$USER:\$USER" "\$SSH_PATH/authorized_keys"
-EOF
-
-# ==============================
-# Output private key in JSON format
-# ==============================
-
-# Prepare PEM content as single line
-PEM_SINGLE_LINE="$(tr '\n' '\\' < "$SSH_KEY_LOCAL" | sed 's/\\/\\n/g')"
-
-# Convert to PPK if requested
-if [ "$CONVERT_TO_PPK" = "1" ]; then
-    # Check if puttygen is available
-    if command -v puttygen >/dev/null 2>&1; then
-        PPK_FILE="$TMP_DIR/britive-id_rsa.ppk"
-        puttygen "$SSH_KEY_LOCAL" -o "$PPK_FILE" -O private >/dev/null 2>&1
-        
-        if [ -f "$PPK_FILE" ]; then
-            PPK_SINGLE_LINE="$(tr '\n' '\\' < "$PPK_FILE" | sed 's/\\/\\n/g')"
-            # Output JSON with both PEM and PPK
-            jq -n --arg pemContent "$PEM_SINGLE_LINE" --arg ppkContent "$PPK_SINGLE_LINE" '{pemContent: $pemContent, ppkContent: $ppkContent}'
-        else
-            echo "Warning: PPK conversion failed, outputting PEM only" >&2
-            jq -n --arg pemContent "$PEM_SINGLE_LINE" '{pemContent: $pemContent}'
-        fi
+run_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif sudo -n true >/dev/null 2>&1; then
+        sudo -n "$@"
     else
-        echo "Warning: puttygen not found, outputting PEM only (install putty-tools for PPK support)" >&2
-        jq -n --arg pemContent "$PEM_SINGLE_LINE" '{pemContent: $pemContent}'
+        echo "error: provisioning user requires root or passwordless sudo" >&2
+        exit 1
     fi
-else
-    # Output JSON with PEM only
-    jq -n --arg pemContent "$PEM_SINGLE_LINE" '{pemContent: $pemContent}'
+}
+
+if ! id "$TARGET_USER" >/dev/null 2>&1; then
+    if command -v useradd >/dev/null 2>&1; then
+        run_root useradd -m -s /bin/bash "$TARGET_USER"
+    else
+        run_root adduser -D -s /bin/bash "$TARGET_USER"
+    fi
 fi
 
-rm -rf "$TMP_DIR"
+HOME_DIR="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+[ -z "$HOME_DIR" ] && { echo "error: user $TARGET_USER missing from passwd" >&2; exit 1; }
 
-#echo "✅ User $USER created on $REMOTE_HOST with public key marker britive-$TRX"
-#echo "🔑 Private key above — save it securely!"
+run_root mkdir -p "${HOME_DIR}/.ssh"
+run_root chmod 700 "${HOME_DIR}/.ssh"
+
+AUTH_KEYS="${HOME_DIR}/.ssh/authorized_keys"
+if ! run_root grep -qF "# britive-${TRX}" "$AUTH_KEYS" 2>/dev/null; then
+    printf '%s # britive-%s\n' "$PUBKEY" "$TRX" | run_root tee -a "$AUTH_KEYS" >/dev/null
+fi
+
+run_root chmod 600 "$AUTH_KEYS"
+run_root chown -R "${TARGET_USER}:" "${HOME_DIR}/.ssh"
+command -v restorecon >/dev/null 2>&1 && run_root restorecon -R "${HOME_DIR}/.ssh" >/dev/null 2>&1 || true
+
+if [ "$SUDO_FLAG" = "1" ]; then
+    SUDOERS_FILE="/etc/sudoers.d/britive-${TRX}"
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$TARGET_USER" | run_root tee "$SUDOERS_FILE" >/dev/null
+    run_root chmod 440 "$SUDOERS_FILE"
+fi
+REMOTE
+
+# ==============================
+# Output private key (PEM) to stdout
+# ==============================
+cat "$SSH_KEY_LOCAL"
