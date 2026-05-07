@@ -121,15 +121,15 @@ If your identity source uses sAMAccountName (downlevel logon) rather than UPN/em
 export VCENTER_HOST="vcenter-01.example.com"
 export VCENTER_SVC_USER="britive-svc@vsphere.local"
 export VCENTER_SVC_PASSWORD="<service-account-secret>"
-export BRITIVE_USER_EMAIL="clint.pollock@example.com"
+export BRITIVE_USER_EMAIL="jane.doe@example.com"
 
 python3 checkout.py
 # {"status": "checked_out", "access_url": "https://vcenter-01.example.com/ui",
-#  "principal": "clint.pollock@example.com", "role_id": -1, "entity": "group-d1", ...}
+#  "principal": "jane.doe@example.com", "role_id": -1, "entity": "group-d1", ...}
 
 # To clean up (uses VCENTER_HOST + VCENTER_SVC_USER + VCENTER_SVC_PASSWORD + BRITIVE_USER_EMAIL from above):
 python3 checkin.py
-# {"status": "revoked", "principal": "clint.pollock@example.com", "entity": "group-d1"}
+# {"status": "revoked", "principal": "jane.doe@example.com", "entity": "group-d1"}
 ```
 
 ---

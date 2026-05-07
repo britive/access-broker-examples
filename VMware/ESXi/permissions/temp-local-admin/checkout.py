@@ -8,7 +8,7 @@ command, and the temporary credentials. The JIT account exists only
 until checkin removes it.
 
 The JIT account name is the requestor's email local part — e.g.
-clint.pollock@example.com becomes "clint.pollock". The same account
+jane.doe@example.com becomes "jane.doe". The same account
 works for both the host web UI and SSH (created with shellAccess=true).
 
 All API calls go to the vSphere SOAP endpoint at https://<host>/sdk.
