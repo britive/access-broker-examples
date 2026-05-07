@@ -2,7 +2,7 @@
 
 Template checkout / checkin scripts for JIT admin access to a standalone **VMware ESXi** host. The same JIT account works for **either the host web UI or SSH** — the script creates the account with shell access enabled (`shellAccess=true`), so it can be used both ways. SSH is only usable if the host's SSH service is enabled (it is disabled by default on ESXi). Adapt for your environment — common customer adjustments include changing the JIT account naming convention, scoping the role grant to a non-root inventory object, or replacing the Administrator role with a custom least-privilege role.
 
-On checkout, an ephemeral local account is created on the host and granted the Administrator role at the root inventory object. The account name is the requestor's email local part — `clint.pollock@example.com` becomes `clint.pollock` — so the audit trail on the ESXi host names the actual person, not a synthetic JIT identifier. The requestor receives the host UI URL, an SSH command, and the ephemeral sign-in credentials. On checkin, the role assignment is removed and the account is deleted. All API calls go to the vSphere SOAP endpoint at `https://<host>/sdk` — no SSH, no agent, no extra infrastructure on the broker side.
+On checkout, an ephemeral local account is created on the host and granted the Administrator role at the root inventory object. The account name is the requestor's email local part — `jane.doe@example.com` becomes `jane.doe` — so the audit trail on the ESXi host names the actual person, not a synthetic JIT identifier. The requestor receives the host UI URL, an SSH command, and the ephemeral sign-in credentials. On checkin, the role assignment is removed and the account is deleted. All API calls go to the vSphere SOAP endpoint at `https://<host>/sdk` — no SSH, no agent, no extra infrastructure on the broker side.
 
 > Standalone ESXi only supports JIT via creation of an ephemeral local account — there is no SSO/AD integration on a single host. vCenter (planned) offers other options like SSO group membership and role grants on existing identities.
 
@@ -40,7 +40,7 @@ On checkout, an ephemeral local account is created on the host and granted the A
 
 ### Checkout (`checkout.py`)
 
-1. Derives the JIT account name from `BRITIVE_USER_EMAIL` — the lowercase email local part with anything outside `[a-z0-9._-]` stripped (e.g. `clint.pollock@example.com` → `clint.pollock`).
+1. Derives the JIT account name from `BRITIVE_USER_EMAIL` — the lowercase email local part with anything outside `[a-z0-9._-]` stripped (e.g. `jane.doe@example.com` → `jane.doe`).
 2. Generates an ephemeral sign-in secret (random, 18 chars).
 3. Calls `Login` on `ha-sessionmgr` to authenticate the service account.
 4. Calls `CreateUser` on `ha-localacctmgr` to create the JIT account with `shellAccess=true`. If the account already exists, `UpdateUser` is called instead to refresh the secret. ⚠ **See "Name Collision" below.**
@@ -66,12 +66,12 @@ On checkout, an ephemeral local account is created on the host and granted the A
 
 ## Name Collision
 
-Because the JIT account name is the email local part with no prefix, a checkout for `clint.pollock@example.com` will hit any pre-existing local account named `clint.pollock` on the host — and the script's "AlreadyExists → UpdateUser" path will **overwrite that account's secret** with the ephemeral JIT secret. On checkin, the account will then be deleted.
+Because the JIT account name is the email local part with no prefix, a checkout for `jane.doe@example.com` will hit any pre-existing local account named `jane.doe` on the host — and the script's "AlreadyExists → UpdateUser" path will **overwrite that account's secret** with the ephemeral JIT secret. On checkin, the account will then be deleted.
 
 **This is fine when ESXi local accounts are managed exclusively through Britive.** If the host has manually-created admin accounts that share names with Britive user emails, you have two options:
 
 1. Keep this behavior and ensure manually-created accounts on the host don't share names with Britive user emails.
-2. Reintroduce a small prefix in `jit_username()` (e.g. `b-clint.pollock`) so JIT accounts can never collide with manually-created ones.
+2. Reintroduce a small prefix in `jit_username()` (e.g. `b-jane.doe`) so JIT accounts can never collide with manually-created ones.
 
 ---
 
@@ -142,16 +142,16 @@ If SSH is left disabled, requestors can still use the web UI URL — the SSH com
 export ESXI_HOST="esxi-01.example.com"
 export ESXI_SVC_USER="britive-svc"
 export ESXI_SVC_PASSWORD="<service-account-secret>"
-export BRITIVE_USER_EMAIL="clint.pollock@example.com"
+export BRITIVE_USER_EMAIL="jane.doe@example.com"
 
 python3 checkout.py
 # {"status": "checked_out", "access_url": "https://esxi-01.example.com/ui",
-#  "ssh_command": "ssh clint.pollock@esxi-01.example.com",
-#  "username": "clint.pollock", ...}
+#  "ssh_command": "ssh jane.doe@esxi-01.example.com",
+#  "username": "jane.doe", ...}
 
 # To clean up (uses ESXI_HOST + ESXI_SVC_USER + ESXI_SVC_PASSWORD + BRITIVE_USER_EMAIL from above):
 python3 checkin.py
-# {"status": "revoked", "removed_user": "clint.pollock"}
+# {"status": "revoked", "removed_user": "jane.doe"}
 ```
 
 ---
