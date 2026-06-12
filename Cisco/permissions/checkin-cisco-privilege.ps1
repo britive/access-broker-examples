@@ -11,7 +11,9 @@
 #   CISCO_SWITCH_HOST    – IP address or hostname of the switch
 #   CISCO_ADMIN_USER     – Admin username for the SSH session
 #   CISCO_ADMIN_PASSWORD – Admin password for the SSH session
-#   CISCO_TARGET_USER    – Local username to remove
+#   CISCO_TARGET_USER    – Target identity as an email address
+#                          (e.g. alice@example.com). The domain is
+#                          stripped to derive the local switch username.
 #
 # Optional env vars:
 #   CISCO_ENABLE_SECRET  – Enable mode secret (only needed if
@@ -148,13 +150,19 @@ try {
     $SwitchHost    = $env:CISCO_SWITCH_HOST
     $AdminUser     = $env:CISCO_ADMIN_USER
     $AdminPassword = ConvertTo-SecureString $env:CISCO_ADMIN_PASSWORD -AsPlainText -Force
-    $TargetUser    = $env:CISCO_TARGET_USER
+    # CISCO_TARGET_USER is supplied as an email address (e.g. alice@example.com).
+    # Strip the domain to derive the local switch username (IOS usernames cannot
+    # contain '@'). If no '@' is present, the value is used unchanged.
+    $TargetIdentity = $env:CISCO_TARGET_USER
+    $TargetUser    = ($env:CISCO_TARGET_USER -split '@')[0]
+    if (-not $TargetUser) { throw "CISCO_TARGET_USER resolved to an empty username after stripping the domain." }
     $EnableSecret  = $env:CISCO_ENABLE_SECRET    # optional
 
     Write-Host "Starting Cisco IOS XE privilege checkin (account removal)."
-    Write-Host "  Target switch : $SwitchHost"
-    Write-Host "  Admin user    : $AdminUser"
-    Write-Host "  Target user   : $TargetUser"
+    Write-Host "  Target switch   : $SwitchHost"
+    Write-Host "  Admin user      : $AdminUser"
+    Write-Host "  Target identity : $TargetIdentity"
+    Write-Host "  Target user     : $TargetUser"
 
     # STEP 2: Load Posh-SSH module
     if (-not (Get-Module -Name Posh-SSH -ListAvailable)) {
