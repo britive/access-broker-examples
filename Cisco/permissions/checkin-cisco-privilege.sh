@@ -12,7 +12,9 @@
 #   CISCO_SWITCH_HOST    – IP address or hostname of the switch
 #   CISCO_ADMIN_USER     – Admin username for the SSH session
 #   CISCO_ADMIN_PASSWORD – Admin password for the SSH session
-#   CISCO_TARGET_USER    – Local username to remove
+#   CISCO_TARGET_USER    – Target identity as an email address
+#                          (e.g. alice@example.com). The domain is
+#                          stripped to derive the local switch username.
 #
 # Optional env vars:
 #   CISCO_ENABLE_SECRET  – Enable mode secret (only needed if
@@ -27,6 +29,14 @@ set -euo pipefail
 : "${CISCO_ADMIN_USER:?CISCO_ADMIN_USER is not set. Cannot authenticate to switch.}"
 : "${CISCO_ADMIN_PASSWORD:?CISCO_ADMIN_PASSWORD is not set. Cannot authenticate to switch.}"
 : "${CISCO_TARGET_USER:?CISCO_TARGET_USER is not set. Cannot identify target account.}"
+
+# CISCO_TARGET_USER is supplied as an email address (e.g. alice@example.com).
+# Strip the domain to derive the local switch username (IOS usernames cannot
+# contain '@'). If no '@' is present, the value is used unchanged.
+CISCO_TARGET_IDENTITY="${CISCO_TARGET_USER}"
+CISCO_TARGET_USER="${CISCO_TARGET_USER%%@*}"
+: "${CISCO_TARGET_USER:?CISCO_TARGET_USER resolved to an empty username after stripping the domain.}"
+export CISCO_TARGET_USER
 
 # Apply defaults and export so the expect subprocess can read via $env()
 export CISCO_ENABLE_SECRET="${CISCO_ENABLE_SECRET:-}"
@@ -122,9 +132,17 @@ expect {
 }
 
 # ── Remove the user account ───────────────────────────────────────────────────
-puts "  Removing user '$target_user'..."
+# IOS XE 17.x prompts for confirmation when removing a username:
+#   "This operation will remove all username related configurations ...
+#    Do you want to continue? [confirm]"
+# Accept the confirmation if it appears, then wait for the config prompt.
+puts stderr "  Removing user '$target_user'..."
 send "no username $target_user\r"
 expect {
+    -nocase -re {\[confirm\]|continue\?} {
+        send "\r"
+        exp_continue
+    }
     -re {\(config\)#} {}
     timeout {
         puts stderr "  ERROR: Timed out waiting for config prompt after removing user on $switch_host."
@@ -169,7 +187,8 @@ EXPECT_SCRIPT
 echo "Starting Cisco IOS XE privilege checkin (account removal)."
 echo "  Target switch : ${CISCO_SWITCH_HOST}"
 echo "  Admin user    : ${CISCO_ADMIN_USER}"
-echo "  Target user   : ${CISCO_TARGET_USER}"
+echo "  Target identity : ${CISCO_TARGET_IDENTITY}"
+echo "  Target user     : ${CISCO_TARGET_USER}"
 
 if ! checkin_privilege "${CISCO_SWITCH_HOST}"; then
     echo "ERROR: Checkin FAILED for user '${CISCO_TARGET_USER}' on switch '${CISCO_SWITCH_HOST}'." >&2

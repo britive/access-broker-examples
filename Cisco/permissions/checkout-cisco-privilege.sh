@@ -12,10 +12,16 @@
 #   CISCO_SWITCH_HOST         – IP address or hostname of the switch
 #   CISCO_ADMIN_USER          – Admin username for the SSH session
 #   CISCO_ADMIN_PASSWORD      – Admin password for the SSH session
-#   CISCO_TARGET_USER         – Local username to create / escalate
-#   CISCO_TARGET_PASSWORD     – Password to set on the target account
+#   CISCO_TARGET_USER         – Target identity as an email address
+#                               (e.g. alice@example.com). The domain is
+#                               stripped to derive the local switch username.
 #
 # Optional env vars:
+#   CISCO_TARGET_PASSWORD     – Password to set on the target account.
+#                               If unset, a strong random password is
+#                               generated here and printed on stdout so
+#                               the broker / caller can capture it.
+#   CISCO_PASSWORD_LENGTH     – Length of the generated password (default: 20)
 #   CISCO_ENABLE_SECRET       – Enable mode secret (only needed if
 #                               the admin account is not privilege 15)
 #   CISCO_ESCALATED_PRIVILEGE – Privilege level to grant (default: 15)
@@ -29,11 +35,39 @@ set -euo pipefail
 : "${CISCO_ADMIN_USER:?CISCO_ADMIN_USER is not set. Cannot authenticate to switch.}"
 : "${CISCO_ADMIN_PASSWORD:?CISCO_ADMIN_PASSWORD is not set. Cannot authenticate to switch.}"
 : "${CISCO_TARGET_USER:?CISCO_TARGET_USER is not set. Cannot identify target account.}"
-: "${CISCO_TARGET_PASSWORD:?CISCO_TARGET_PASSWORD is not set. Cannot set account password.}"
+
+# CISCO_TARGET_USER is supplied as an email address (e.g. alice@example.com).
+# Strip the domain to derive the local switch username (IOS usernames cannot
+# contain '@'). If no '@' is present, the value is used unchanged.
+CISCO_TARGET_IDENTITY="${CISCO_TARGET_USER}"
+CISCO_TARGET_USER="${CISCO_TARGET_USER%%@*}"
+: "${CISCO_TARGET_USER:?CISCO_TARGET_USER resolved to an empty username after stripping the domain.}"
+export CISCO_TARGET_USER
 
 # Apply defaults and export so the expect subprocess can read via $env()
 export CISCO_ESCALATED_PRIVILEGE="${CISCO_ESCALATED_PRIVILEGE:-15}"
 export CISCO_ENABLE_SECRET="${CISCO_ENABLE_SECRET:-}"
+export CISCO_PASSWORD_LENGTH="${CISCO_PASSWORD_LENGTH:-20}"
+
+# ─── Generate the target password if the caller did not supply one ───────────
+# Use only alphanumerics: avoids IOS CLI / expect special-char escaping issues
+# (e.g. '?', '$', spaces) while still giving a strong secret.
+if [[ -z "${CISCO_TARGET_PASSWORD:-}" ]]; then
+    # Read a fixed block of random bytes (head closes /dev/urandom cleanly),
+    # filter to alphanumerics, then slice to the requested length in bash.
+    # Avoids the SIGPIPE that 'tr ... | head -c N' raises under 'set -o pipefail'.
+    _rand_alnum="$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')"
+    CISCO_TARGET_PASSWORD="${_rand_alnum:0:${CISCO_PASSWORD_LENGTH}}"
+    unset _rand_alnum
+    if [[ "${#CISCO_TARGET_PASSWORD}" -lt "${CISCO_PASSWORD_LENGTH}" ]]; then
+        echo "ERROR: Failed to generate a random password." >&2
+        exit 1
+    fi
+    CISCO_PASSWORD_GENERATED=true
+else
+    CISCO_PASSWORD_GENERATED=false
+fi
+export CISCO_TARGET_PASSWORD
 
 # ─── Check dependencies ───────────────────────────────────────────────────────
 
@@ -52,7 +86,7 @@ fi
 
 checkout_privilege() {
     local switch_host="$1"
-    echo "  Connecting to ${switch_host} via SSH..."
+    echo "  Connecting to ${switch_host} via SSH..." >&2
 
     # Pass the per-call host via env; all other CISCO_* vars are already exported.
     SWITCH_HOST="${switch_host}" expect -f - <<'EXPECT_SCRIPT'
@@ -98,7 +132,7 @@ expect {
 
 # ── If in user EXEC mode (>), elevate to privileged EXEC (#) ─────────────────
 if {[string match "*>*" $prompt]} {
-    puts "  Entering privileged EXEC mode via 'enable'..."
+    puts stderr "  Entering privileged EXEC mode via 'enable'..."
     send "enable\r"
     expect {
         -nocase -re {password:} { send "$enable_secret\r" }
@@ -108,7 +142,7 @@ if {[string match "*>*" $prompt]} {
         }
     }
     expect {
-        -re {#} { puts "  Privileged EXEC mode entered." }
+        -re {#} { puts stderr "  Privileged EXEC mode entered." }
         timeout {
             puts stderr "  ERROR: Failed to enter privileged EXEC mode on $switch_host. Verify CISCO_ENABLE_SECRET."
             exit 1
@@ -117,7 +151,7 @@ if {[string match "*>*" $prompt]} {
 }
 
 # ── Enter global configuration mode ──────────────────────────────────────────
-puts "  Entering global configuration mode..."
+puts stderr "  Entering global configuration mode..."
 send "configure terminal\r"
 expect {
     -re {\(config\)#} {}
@@ -128,7 +162,7 @@ expect {
 }
 
 # ── Create / escalate user (scrypt / type-9 hash – IOS XE 16.x+) ─────────────
-puts "  Creating / escalating user '$target_user' to privilege $escalated_priv..."
+puts stderr "  Creating / escalating user '$target_user' to privilege $escalated_priv..."
 send "username $target_user privilege $escalated_priv algorithm-type scrypt secret $target_password\r"
 expect {
     -re {\(config\)#} {}
@@ -149,7 +183,7 @@ expect {
 }
 
 # ── Persist to NVRAM ──────────────────────────────────────────────────────────
-puts "  Saving configuration to NVRAM..."
+puts stderr "  Saving configuration to NVRAM..."
 send "write memory\r"
 set timeout 30
 expect {
@@ -164,24 +198,41 @@ expect {
 set timeout 5
 expect { -re {#} {} timeout {} }
 
-puts "  Configuration saved."
-puts "  User '$target_user' created/escalated to privilege $escalated_priv on $switch_host."
+puts stderr "  Configuration saved."
+puts stderr "  User '$target_user' created/escalated to privilege $escalated_priv on $switch_host."
 exit 0
 EXPECT_SCRIPT
 }
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 
-echo "Starting Cisco IOS XE privilege checkout (account creation)."
-echo "  Target switch      : ${CISCO_SWITCH_HOST}"
-echo "  Admin user         : ${CISCO_ADMIN_USER}"
-echo "  Target user        : ${CISCO_TARGET_USER}"
-echo "  Escalated privilege: ${CISCO_ESCALATED_PRIVILEGE}"
+# All progress goes to stderr so stdout carries only the final JSON result.
+echo "Starting Cisco IOS XE privilege checkout (account creation)." >&2
+echo "  Target switch      : ${CISCO_SWITCH_HOST}" >&2
+echo "  Admin user         : ${CISCO_ADMIN_USER}" >&2
+echo "  Target identity    : ${CISCO_TARGET_IDENTITY}" >&2
+echo "  Target user        : ${CISCO_TARGET_USER}" >&2
+echo "  Escalated privilege: ${CISCO_ESCALATED_PRIVILEGE}" >&2
 
 if ! checkout_privilege "${CISCO_SWITCH_HOST}"; then
     echo "ERROR: Checkout FAILED for user '${CISCO_TARGET_USER}' on switch '${CISCO_SWITCH_HOST}'." >&2
     exit 1
 fi
 
-echo "Checkout completed: user '${CISCO_TARGET_USER}' has privilege ${CISCO_ESCALATED_PRIVILEGE} on switch '${CISCO_SWITCH_HOST}'."
+echo "Checkout completed: user '${CISCO_TARGET_USER}' has privilege ${CISCO_ESCALATED_PRIVILEGE} on switch '${CISCO_SWITCH_HOST}'." >&2
+
+# ─── Emit the checkout result as JSON on stdout (the only stdout output) ─────
+# login, hostname and password are alphanumerics / dotted-host only, so they
+# need no JSON string escaping. connection_string combines all into a single
+# ready-to-use SSH URI.
+connection_string="ssh://${CISCO_TARGET_USER}:${CISCO_TARGET_PASSWORD}@${CISCO_SWITCH_HOST}:22"
+ssh_command="ssh -o PubkeyAcceptedKeyTypes=+ssh-rsa ${CISCO_TARGET_USER}@${CISCO_SWITCH_HOST}"
+
+printf '{"login":"%s","hostname":"%s","password":"%s","connection_string":"%s","ssh_command":"%s"}\n' \
+    "${CISCO_TARGET_USER}" \
+    "${CISCO_SWITCH_HOST}" \
+    "${CISCO_TARGET_PASSWORD}" \
+    "${connection_string}" \
+    "${ssh_command}"
+
 exit 0

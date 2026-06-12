@@ -11,10 +11,16 @@
 #   CISCO_SWITCH_HOST         – IP address or hostname of the switch
 #   CISCO_ADMIN_USER          – Admin username for the SSH session
 #   CISCO_ADMIN_PASSWORD      – Admin password for the SSH session
-#   CISCO_TARGET_USER         – Local username to create / escalate
-#   CISCO_TARGET_PASSWORD     – Password to set on the target account
+#   CISCO_TARGET_USER         – Target identity as an email address
+#                               (e.g. alice@example.com). The domain is
+#                               stripped to derive the local switch username.
 #
 # Optional env vars:
+#   CISCO_TARGET_PASSWORD     – Password to set on the target account.
+#                               If unset, a strong random password is
+#                               generated here and printed on stdout so
+#                               the broker / caller can capture it.
+#   CISCO_PASSWORD_LENGTH     – Length of the generated password (default: 20)
 #   CISCO_ENABLE_SECRET       – Enable mode secret (only needed if
 #                               the admin account is not privilege 15)
 #   CISCO_ESCALATED_PRIVILEGE – Privilege level to grant (default: 15)
@@ -152,19 +158,41 @@ try {
     if (-not $env:CISCO_ADMIN_USER)      { throw "CISCO_ADMIN_USER environment variable is not set. Cannot authenticate to switch." }
     if (-not $env:CISCO_ADMIN_PASSWORD)  { throw "CISCO_ADMIN_PASSWORD environment variable is not set. Cannot authenticate to switch." }
     if (-not $env:CISCO_TARGET_USER)     { throw "CISCO_TARGET_USER environment variable is not set. Cannot identify target account." }
-    if (-not $env:CISCO_TARGET_PASSWORD) { throw "CISCO_TARGET_PASSWORD environment variable is not set. Cannot set account password." }
 
     $SwitchHost         = $env:CISCO_SWITCH_HOST
     $AdminUser          = $env:CISCO_ADMIN_USER
     $AdminPassword      = ConvertTo-SecureString $env:CISCO_ADMIN_PASSWORD  -AsPlainText -Force
-    $TargetUser         = $env:CISCO_TARGET_USER
-    $TargetPassword     = ConvertTo-SecureString $env:CISCO_TARGET_PASSWORD -AsPlainText -Force
+    # CISCO_TARGET_USER is supplied as an email address (e.g. alice@example.com).
+    # Strip the domain to derive the local switch username (IOS usernames cannot
+    # contain '@'). If no '@' is present, the value is used unchanged.
+    $TargetIdentity     = $env:CISCO_TARGET_USER
+    $TargetUser         = ($env:CISCO_TARGET_USER -split '@')[0]
+    if (-not $TargetUser) { throw "CISCO_TARGET_USER resolved to an empty username after stripping the domain." }
     $EnableSecret       = $env:CISCO_ENABLE_SECRET           # optional
     $EscalatedPrivilege = if ($env:CISCO_ESCALATED_PRIVILEGE) { [int]$env:CISCO_ESCALATED_PRIVILEGE } else { 15 }
+
+    # ── Generate the target password if the caller did not supply one ────────
+    # Use only alphanumerics: avoids IOS CLI special-char issues while still
+    # giving a strong secret. Crypto RNG, not Get-Random.
+    if (-not $env:CISCO_TARGET_PASSWORD) {
+        $PasswordLength      = if ($env:CISCO_PASSWORD_LENGTH) { [int]$env:CISCO_PASSWORD_LENGTH } else { 20 }
+        $chars               = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+        $bytes               = New-Object 'System.Byte[]' $PasswordLength
+        $rng                 = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+        $rng.GetBytes($bytes)
+        $rng.Dispose()
+        $PlainTargetPassword = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
+        $PasswordGenerated   = $true
+    } else {
+        $PlainTargetPassword = $env:CISCO_TARGET_PASSWORD
+        $PasswordGenerated   = $false
+    }
+    $TargetPassword     = ConvertTo-SecureString $PlainTargetPassword -AsPlainText -Force
 
     Write-Host "Starting Cisco IOS XE privilege checkout (account creation)."
     Write-Host "  Target switch      : $SwitchHost"
     Write-Host "  Admin user         : $AdminUser"
+    Write-Host "  Target identity    : $TargetIdentity"
     Write-Host "  Target user        : $TargetUser"
     Write-Host "  Escalated privilege: $EscalatedPrivilege"
 
@@ -186,6 +214,14 @@ try {
         -EscalatedPrivilege $EscalatedPrivilege
 
     Write-Host "Checkout completed: user '$TargetUser' has privilege $EscalatedPrivilege on switch '$SwitchHost'."
+
+    # ── Emit the credential so the broker / caller can capture it ────────────
+    if ($PasswordGenerated) {
+        Write-Host "  Password was auto-generated for this checkout."
+    }
+    Write-Output "CISCO_TARGET_USER=$TargetUser"
+    Write-Output "CISCO_TARGET_PASSWORD=$PlainTargetPassword"
+
     exit 0
 }
 catch {
