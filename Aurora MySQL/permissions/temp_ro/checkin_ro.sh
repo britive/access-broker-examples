@@ -1,6 +1,8 @@
 #!/bin/bash
 #
-# Britive checkin script: Aurora MySQL JIT user removal
+# Britive checkin script: MySQL JIT read-only user removal
+#
+# Drops the user created at checkout. DROP USER also removes any grants.
 #
 # Expected env vars (set by Britive Resource Type / Profile):
 #   user    - requesting user's email (Britive auto-populates)
@@ -13,14 +15,11 @@ set -u
 # Sanitize MySQL username from email local part -- must match checkout logic
 MYSQL_USER="${user%%@*}"
 MYSQL_USER="${MYSQL_USER//[^a-zA-Z0-9]/}"
+MYSQL_USER="${MYSQL_USER}_ro"   # must match checkout suffix
 
 MYSQL_HOST="${host}"
 MYSQL_URL="${dburl}"
 SECRET="${secret}"
-
-tmp_conf=$(mktemp --suffix=.cnf) || exit 1
-chmod 600 "$tmp_conf"
-trap 'rm -f "$tmp_conf"' EXIT
 
 finish () {
   exit "$1"
@@ -35,14 +34,10 @@ secret_value=$(aws secretsmanager get-secret-value \
 db_user=$(echo "$secret_value" | jq -r '.username')
 db_password=$(echo "$secret_value" | jq -r '.password')
 
-cat > "$tmp_conf" <<EOF
-[client]
-user = $db_user
-password = $db_password
-host = $MYSQL_URL
-EOF
+export MYSQL_PWD="$db_password"
+trap 'unset MYSQL_PWD' EXIT
 
-mysql --defaults-extra-file="$tmp_conf" \
+mysql -h "$MYSQL_URL" -u "$db_user" \
   -e "DROP USER IF EXISTS '${MYSQL_USER}'@'${MYSQL_HOST}';" \
   || finish 1
 
