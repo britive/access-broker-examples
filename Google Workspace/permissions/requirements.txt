@@ -9,7 +9,7 @@ google-auth==2.35.0
 google-auth-httplib2==0.2.0
 googleapis-common-protos==1.65.0
 httplib2==0.22.0
-idna==3.10
+idna>=3.15
 jmespath==1.0.1
 proto-plus==1.25.0
 protobuf>=5.29.5
