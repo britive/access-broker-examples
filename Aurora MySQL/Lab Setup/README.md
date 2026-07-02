@@ -3,6 +3,25 @@
 CloudFormation template that stands up a self-contained lab for exercising the
 Britive access broker against MySQL RDS.
 
+> ## ⚠️ Read Before You Deploy
+>
+> **This stack CREATES real, billable AWS resources** in your account: a VPC with
+> public subnets + Internet Gateway, a **public-IP EC2 instance**, a **MySQL RDS
+> database**, two **Secrets Manager secrets** (with real credentials), and a
+> **named IAM role**. See [What It Builds](#what-it-builds) for the full list.
+>
+> **This stack does NOT do everything.** After the stack reaches
+> `CREATE_COMPLETE`, an **admin must manually perform 3 post-deploy steps** or the
+> lab will not function:
+>
+> 1. **Install + register the Britive broker** on the EC2 host (needs a pool auth
+>    token from the Britive console).
+> 2. **Create the breakglass DB user** out-of-band (the broker role cannot).
+> 3. **Wire the Britive permission env vars** (`dburl`, `secret`, etc.) from the
+>    stack outputs.
+>
+> Full detail in [After Deploy](#after-deploy). **Skipping these = non-working lab.**
+
 ## What It Builds
 
 | Resource | Detail |
@@ -62,6 +81,10 @@ gateway, no VPC endpoints — cheapest topology for a lab.
 
 ## Deploy
 
+Pick **one** path — CLI or AWS Console UI. Both create the identical stack.
+
+### Option A — AWS CLI
+
 ```bash
 aws cloudformation deploy \
   --stack-name britive-mysql-lab \
@@ -71,8 +94,26 @@ aws cloudformation deploy \
 ```
 
 Override parameters with `--parameter-overrides Key=Value ...`.
-By default there is **no SSH ingress** — connect to the broker via SSM Session
-Manager. Set `SSHKeyName` + `SSHLocation=<your-ip>/32` to enable SSH.
+
+### Option B — AWS Console (UI)
+
+1. Sign in to the AWS Console, pick region **`us-west-2`** (top-right region
+   selector — must match the scripts; see region note below).
+2. **CloudFormation** → **Create stack** → **With new resources (standard)**.
+3. **Prepare template** → *Template is ready*. **Specify template** → *Upload a
+   template file* → **Choose file** → select `mysql-broker-lab.yaml` from this
+   folder → **Next**.
+4. **Stack name**: `britive-mysql-lab`. Adjust any parameters (defaults in the
+   [Parameters](#parameters) table are fine for a lab) → **Next**.
+5. **Configure stack options** — defaults OK → **Next**.
+6. **Review** — at the bottom, tick **"I acknowledge that AWS CloudFormation
+   might create IAM resources with custom names"** (this is the UI equivalent of
+   `--capabilities CAPABILITY_NAMED_IAM`; the stack fails without it) → **Submit**.
+7. Watch the **Events** tab until status is **`CREATE_COMPLETE`**. Then open the
+   **Outputs** tab — you need those values for the post-deploy steps below.
+
+**Common:** By default there is **no SSH ingress** — connect to the broker via SSM
+Session Manager. Set `SSHKeyName` + `SSHLocation=<your-ip>/32` to enable SSH.
 
 RDS creation takes ~10-15 minutes; the stack completes when the instance is available.
 
@@ -82,15 +123,29 @@ RDS creation takes ~10-15 minutes; the stack completes when the instance is avai
 
 ## After Deploy
 
+> These 3 steps are **mandatory admin actions**. The CloudFormation stack does
+> not perform them. The lab does not work until all three are done.
+
 ### 1. Read the stack outputs
+
+CLI:
 
 ```bash
 aws cloudformation describe-stacks --stack-name britive-mysql-lab \
   --query 'Stacks[0].Outputs' --output table
 ```
 
-Use `MySQLEndpoint` as `dburl` and `BritiveAdminSecretArn` (or the secret name)
-as `secret` when configuring the Britive permission env vars.
+UI: CloudFormation → your stack → **Outputs** tab.
+
+Outputs you will use:
+
+| Output | Used as | Where |
+| --- | --- | --- |
+| `MySQLEndpoint` | `dburl` | Britive permission env vars + breakglass step |
+| `MySQLPort` | port `3306` | reference |
+| `BritiveAdminSecretArn` (or secret name) | `secret` | Britive permission env vars |
+| `BreakglassSecretArn` | breakglass creds | step 3 (not broker-readable) |
+| `BrokerInstanceId` | SSM target | step 2 |
 
 ### 2. Finish the Britive broker install
 
