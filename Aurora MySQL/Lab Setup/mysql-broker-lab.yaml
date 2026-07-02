@@ -1,0 +1,401 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Aurora MySQL lab: one MySQL RDS instance, Britive admin + breakglass credentials
+  in Secrets Manager, and an EC2 host running the Britive broker with read-only
+  access to the admin secret. Simple single-VPC topology with open 443 egress
+  (no per-URL allow-listing).
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  ProjectName:
+    Type: String
+    Default: britive-mysql-lab
+    Description: Prefix for resource names and tags.
+
+  DBName:
+    Type: String
+    Default: systemdb
+    Description: >-
+      Initial database created in the RDS instance. Matches the default database
+      used by the temp-user checkout script (GRANT ALL ON systemdb.*).
+
+  DBEngineVersion:
+    Type: String
+    Default: "8.0.40"
+    Description: >-
+      MySQL engine version. Must be an 8.0.x release so it matches the
+      mysql8.0 parameter group family.
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: RDS instance class. db.t3.micro is free-tier eligible.
+
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    Description: RDS storage in GiB.
+
+  BrokerInstanceType:
+    Type: String
+    Default: t3.medium
+    Description: >-
+      EC2 instance type for the Britive broker. t3.medium = 2 vCPU / 4 GiB RAM.
+      (Note: t3.medium is NOT free-tier; the Amazon Linux AMI itself is free.)
+
+  BrokerRootVolumeSize:
+    Type: Number
+    Default: 20
+    Description: EC2 root EBS volume size in GiB.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI (resolved from SSM Public Parameter Store).
+
+  SSHKeyName:
+    Type: String
+    Default: ""
+    Description: >-
+      (Optional) Existing EC2 key pair name for SSH. Leave blank to rely on
+      SSM Session Manager only (recommended).
+
+  SSHLocation:
+    Type: String
+    Default: 127.0.0.1/32
+    Description: >-
+      CIDR allowed to SSH to the broker. Only used if SSHKeyName is set.
+      Defaults to a non-routable value; set to your IP/32 to enable SSH.
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref SSHKeyName, ""]]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # ---- Networking (simple single-VPC, two public subnets) ----
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-igw"
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-2"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-rt"
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  # ---- Security groups ----
+  BrokerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Britive broker EC2 host
+      VpcId: !Ref VPC
+      # Simple topology: allow ALL outbound 443 (Britive tenant, SSM, Secrets
+      # Manager, OS package repos) instead of allow-listing individual URLs.
+      # Egress rules are inline (not separate resources) so the default
+      # allow-all egress is replaced and traffic is limited to 443 + 3306.
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS out (Britive control plane, AWS APIs, package repos)
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          DestinationSecurityGroupId: !Ref DBSecurityGroup
+          Description: MySQL to RDS
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-broker-sg"
+
+  BrokerSSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasKeyName
+    Properties:
+      GroupId: !Ref BrokerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SSHLocation
+      Description: SSH from operator
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MySQL RDS instance
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-db-sg"
+
+  DBIngressFromBroker:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref BrokerSecurityGroup
+      Description: MySQL from broker
+
+  # ---- Secrets ----
+  # (i) Britive admin credentials = RDS master user. The broker's checkout/checkin
+  #     scripts read this secret to provision temporary DB users.
+  BritiveAdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${ProjectName}/mysql/admin"
+      Description: Britive admin (RDS master) credentials
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "britiveadmin"}'
+        GenerateStringKey: "password"
+        PasswordLength: 24
+        ExcludeCharacters: '"@/\ '
+
+  # (ii) Breakglass credentials for emergency direct access. Stored here; the
+  #      matching DB user is created out-of-band (see Lab Setup README).
+  BreakglassSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${ProjectName}/mysql/breakglass"
+      Description: Breakglass emergency MySQL credentials
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "breakglass"}'
+        GenerateStringKey: "password"
+        PasswordLength: 24
+        ExcludeCharacters: '"@/\ '
+
+  SecretRDSAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref BritiveAdminSecret
+      TargetId: !Ref MySQLInstance
+      TargetType: AWS::RDS::DBInstance
+
+  # ---- RDS MySQL ----
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${ProjectName} DB subnets"
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+  # Parameter group: force mysql_native_password so the MariaDB client shipped
+  # with Amazon Linux (and the temporary users the broker creates) authenticate
+  # cleanly against MySQL 8.0's default caching_sha2_password.
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: !Sub "${ProjectName} MySQL 8.0 parameters"
+      Family: mysql8.0
+      Parameters:
+        default_authentication_plugin: mysql_native_password
+
+  MySQLInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-mysql"
+      Engine: mysql
+      EngineVersion: !Ref DBEngineVersion
+      DBName: !Ref DBName
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      StorageType: gp3
+      DBParameterGroupName: !Ref DBParameterGroup
+      MasterUsername: !Sub "{{resolve:secretsmanager:${BritiveAdminSecret}:SecretString:username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${BritiveAdminSecret}:SecretString:password}}"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 1
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-mysql"
+
+  # ---- EC2 broker: IAM (read-only on admin secret ONLY) ----
+  BrokerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-broker-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Session Manager access (no inbound SSH needed).
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: read-britive-admin-secret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Read-only, scoped to the Britive admin secret only.
+              # Breakglass secret is intentionally NOT granted here.
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Ref BritiveAdminSecret
+
+  BrokerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BrokerRole
+
+  BrokerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref BrokerInstanceType
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref BrokerInstanceProfile
+      KeyName: !If [HasKeyName, !Ref SSHKeyName, !Ref "AWS::NoValue"]
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref BrokerSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref BrokerRootVolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-broker"
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+
+          # --- Utilities needed by the checkout/checkin scripts ---
+          dnf -y update
+          dnf -y install jq
+
+          # AWS CLI v2 ships preinstalled on Amazon Linux 2023; verify it exists.
+          command -v aws >/dev/null || dnf -y install awscli-2
+
+          # MySQL client. The MariaDB client provides the `mysql` command and,
+          # combined with the RDS default_authentication_plugin=mysql_native_password
+          # parameter, connects cleanly to the MySQL 8.0 instance.
+          dnf -y install mariadb105 || dnf -y install mariadb1011 || true
+
+          # Java runtime required by the Britive broker
+          dnf -y install java-21-amazon-corretto-headless
+
+          # --- Britive broker install (fill in the download link from your tenant) ---
+          # The broker package is downloaded from the Britive console:
+          #   Admin > Access Broker > Broker Pools > Download Broker
+          #
+          # curl -O "<BROKER_DOWNLOAD_LINK>"
+          # rpm -ivh britive-broker-*.rpm
+          # cd /opt/britive-broker/config
+          # cp broker-config-template.yml broker-config.yml
+          #   -> set the broker pool auth token + tenant URL
+          # chown -R britivebroker:britivebroker /opt/britive-broker
+          # systemctl enable --now britive-broker
+          #
+          # The broker runs the scripts in permissions/temp_ro and permissions/temp-user,
+          # which read the Britive admin secret (this host has read-only access to it)
+          # to provision temporary MySQL users.
+          echo "Bootstrap complete. Finish Britive broker install per Lab Setup README."
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  MySQLEndpoint:
+    Description: RDS MySQL endpoint (use as 'dburl' in Britive permission env vars)
+    Value: !GetAtt MySQLInstance.Endpoint.Address
+
+  MySQLPort:
+    Description: RDS MySQL port
+    Value: !GetAtt MySQLInstance.Endpoint.Port
+
+  BritiveAdminSecretArn:
+    Description: Secret ID to use as 'secret' in Britive permission env vars
+    Value: !Ref BritiveAdminSecret
+
+  BreakglassSecretArn:
+    Description: Breakglass secret ARN (not readable by the broker EC2 role)
+    Value: !Ref BreakglassSecret
+
+  BrokerInstanceId:
+    Description: EC2 broker instance ID (connect via SSM Session Manager)
+    Value: !Ref BrokerInstance
