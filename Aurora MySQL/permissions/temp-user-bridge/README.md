@@ -66,6 +66,7 @@ username format, and password.
 | `NATIVE_PORT` | `3306` | Port of the Bridge's native MySQL listener |
 | `NATIVE_AUTH` | `bridge_credentials` | `bridge_credentials` (generated password) or `ldap` (directory password) |
 | `TARGET_TLS` | `true` | TLS from the Bridge to Aurora (recommended for RDS/Aurora) |
+| `DB_CA_CERT` | — | Path to the [RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem) on the broker; enables server cert verification for the admin connection. Without it the connection is encrypted but the chain is not verified (needed because MariaDB 11.4+ clients verify by default and reject the RDS CA) |
 | `AWS_REGION` | `us-west-2` | Secrets Manager region |
 | `BROKER_API` | `/opt/britive-broker/scripts/broker-bridge-api.sh` | Path to the Bridge API helper CLI |
 

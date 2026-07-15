@@ -22,6 +22,10 @@
 #   NATIVE_PORT - Bridge native MySQL listener port (default: 3306)
 #   NATIVE_AUTH - bridge_credentials (default) or ldap
 #   TARGET_TLS  - true/false, TLS from Bridge to Aurora (default: true)
+#   DB_CA_CERT  - path to the RDS CA bundle on the broker; enables server cert
+#                 verification for the admin connection. Without it the
+#                 connection is encrypted but the chain is not verified.
+#                 Download: https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 #   AWS_REGION  - Secrets Manager region (default: us-west-2)
 #   BROKER_API  - Path to broker-bridge-api.sh (default: /opt/britive-broker/scripts/broker-bridge-api.sh)
 
@@ -41,6 +45,7 @@ DB_PORT="${DB_PORT:-3306}"
 NATIVE_PORT="${NATIVE_PORT:-3306}"
 NATIVE_AUTH="${NATIVE_AUTH:-bridge_credentials}"
 TARGET_TLS="${TARGET_TLS:-true}"
+DB_CA_CERT="${DB_CA_CERT:-}"
 AWS_REGION="${AWS_REGION:-us-west-2}"
 BROKER_API="${BROKER_API:-/opt/britive-broker/scripts/broker-bridge-api.sh}"
 
@@ -91,6 +96,24 @@ user = $db_admin_user
 password = $db_admin_password
 host = $MYSQL_URL
 EOF
+
+# TLS to Aurora: newer MariaDB clients verify the server cert by default and
+# reject the RDS CA ("self-signed certificate in certificate chain"). Verify
+# against DB_CA_CERT when provided; otherwise keep the connection encrypted
+# but skip chain verification. Option names differ per client flavor.
+if mysql --version 2>/dev/null | grep -qi mariadb; then
+  if [ -n "$DB_CA_CERT" ]; then
+    printf 'ssl-ca = %s\nssl-verify-server-cert = 1\n' "$DB_CA_CERT" >> "$tmp_conf"
+  else
+    printf 'ssl-verify-server-cert = 0\n' >> "$tmp_conf"
+  fi
+else
+  if [ -n "$DB_CA_CERT" ]; then
+    printf 'ssl-ca = %s\nssl-mode = VERIFY_CA\n' "$DB_CA_CERT" >> "$tmp_conf"
+  else
+    printf 'ssl-mode = REQUIRED\n' >> "$tmp_conf"
+  fi
+fi
 
 mysql --defaults-extra-file="$tmp_conf" \
   -e "CREATE USER '${MYSQL_USER}'@'${MYSQL_HOST}' IDENTIFIED BY '${db_user_password}';" \
