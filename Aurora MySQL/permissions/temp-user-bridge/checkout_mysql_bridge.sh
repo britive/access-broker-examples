@@ -3,27 +3,38 @@
 # Britive checkout script: Aurora MySQL JIT user + Bridge proxied session
 #
 # Creates a temporary MySQL user with a random password, then registers a
-# database checkout with the Britive Bridge so the user connects through the
-# Bridge proxy. The real MySQL credentials never leave the broker/Bridge.
+# database checkout with the Britive Bridge using the caller's BRIDGE
+# CREDENTIALS (native_auth=bridge_credentials). The real MySQL credentials
+# never leave the broker/Bridge.
+#
+# Bridge credential (provided by the broker as env vars):
+#   BRIDGE_AUTH_PASSWORD - bridge password the user types at the native
+#                          mysql password prompt
+#
+# Identity: the native login username is the user's Britive identity (the email
+# in `user`) -- the SAME value as the checkout owner. The Bridge matches BOTH
+# the native mysql username (before %) AND the browser SSO identity against the
+# checkout's "username" field, so they must be identical. The profile "Bridge
+# Username" field is NOT used for matching.
 #
 # Required env vars (set by Britive Resource Type / Profile):
-#   user        - requesting user's email (Britive auto-populates)
-#   host        - MySQL host part for 'user'@'host' (typically '%')
-#   dburl       - RDS / Aurora endpoint hostname
-#   secret      - AWS Secrets Manager secret ID holding admin {username, password}
-#   TRX         - Britive transaction ID
-#   BRIDGE_URL  - Bridge hostname users connect to (e.g. bridge.example.com)
-#   EXPIRATION  - Checkout duration in seconds
+#   user                 - requesting user's email (Britive auto-populates)
+#   host                 - MySQL host part for 'user'@'host' (typically '%')
+#   dburl                - RDS / Aurora endpoint hostname
+#   secret               - AWS Secrets Manager secret ID holding admin {username, password}
+#   TRX                  - Britive transaction ID
+#   BRIDGE_URL           - Bridge web hostname (browser sessions)
+#   EXPIRATION           - Checkout duration in seconds
+#   BRIDGE_AUTH_PASSWORD - bridge password (see above)
 #
 # Optional env vars (with defaults):
+#   NATIVE_HOST - hostname native mysql clients connect to, when it differs
+#                 from the web host (e.g. web on an ALB, native listeners on
+#                 an NLB). Default: BRIDGE_URL host.
 #   DB_NAME     - Database the grant applies to (default: systemdb)
 #   DB_PORT     - MySQL port on the target (default: 3306)
 #   NATIVE_PORT - Bridge native MySQL listener port (default: 3306)
 #   TARGET_TLS  - true/false, TLS from Bridge to Aurora (default: true)
-#
-# Bridge authentication: the user authenticates to the Bridge proxy with the
-# Bridge Username/Password set on their Britive profile (Manage Account ->
-# Bridge Attributes) -- no per-checkout Bridge credentials are generated here.
 #   DB_CA_CERT  - path to the RDS CA bundle on the broker; enables server cert
 #                 verification for the admin connection. Without it the
 #                 connection is encrypted but the chain is not verified.
@@ -48,6 +59,7 @@ NATIVE_PORT="${NATIVE_PORT:-3306}"
 TARGET_TLS="${TARGET_TLS:-true}"
 DB_CA_CERT="${DB_CA_CERT:-}"
 AWS_REGION="${AWS_REGION:-us-west-2}"
+BRIDGE_AUTH_PASSWORD="${BRIDGE_AUTH_PASSWORD:-}"
 BROKER_API="${BROKER_API:-/opt/britive-broker/scripts/broker-bridge-api.sh}"
 
 require_var() {
@@ -66,6 +78,7 @@ require_var secret
 require_var TRX
 require_var BRIDGE_URL
 require_var EXPIRATION
+require_var BRIDGE_AUTH_PASSWORD
 
 # Create temp files with restrictive perms BEFORE writing credentials
 tmp_conf=$(mktemp --suffix=.cnf) || exit 1
@@ -133,24 +146,36 @@ rollback() {
 # ==============================
 # Register the Bridge checkout
 # ==============================
-TOKEN=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 43)
+# native_auth=bridge_credentials: the user authenticates to the Bridge proxy
+# with their bridge password (registered here from BRIDGE_AUTH_PASSWORD) and
+# types it at the native mysql password prompt. The temp MySQL user password
+# is carried separately as target_password (Bridge -> Aurora auth).
+AUTH_METHOD="password"
 EXPIRES_AT=$(($(date +%s) + EXPIRATION))
 
-cat > "$payload" <<EOF
-{
-  "transaction_id": "${TRANSACTION_ID}",
-  "protocol": "mysql",
-  "username": "${USER_EMAIL}",
-  "target_host": "${MYSQL_URL}",
-  "target_port": ${DB_PORT},
-  "target_username": "${MYSQL_USER}",
-  "target_password": "${db_user_password}",
-  "target_database": "${DB_NAME}",
-  "target_tls": ${TARGET_TLS},
-  "expires_at": ${EXPIRES_AT},
-  "token": "${TOKEN}"
-}
-EOF
+jq -n \
+  --arg transaction_id "$TRANSACTION_ID" \
+  --arg username "$USER_EMAIL" \
+  --arg target_host "$MYSQL_URL" \
+  --argjson target_port "$DB_PORT" \
+  --arg target_username "$MYSQL_USER" \
+  --arg target_password "$db_user_password" \
+  --arg target_database "$DB_NAME" \
+  --argjson target_tls "$TARGET_TLS" \
+  --argjson expires_at "$EXPIRES_AT" \
+  --arg bridge_auth_password "$BRIDGE_AUTH_PASSWORD" \
+  '{transaction_id: $transaction_id,
+    protocol: "mysql",
+    username: $username,
+    target_host: $target_host,
+    target_port: $target_port,
+    target_username: $target_username,
+    target_password: $target_password,
+    target_database: $target_database,
+    target_tls: $target_tls,
+    native_auth: "bridge_credentials",
+    bridge_auth_password: $bridge_auth_password,
+    expires_at: $expires_at}' > "$payload"
 
 if ! "${BROKER_API}" checkout-create --file "$payload" >/dev/null; then
   rollback
@@ -162,32 +187,32 @@ fi
 # ==============================
 # Standard Bridge checkout output schema (shared across ssh/rdp/db checkouts
 # so a single response template works for all):
-#   BRIDGE_URL, command, bridge_username, bridge_port, target_username,
-#   browser_session, token
-# BRIDGE_URL is the Bridge hostname (bridge.example.com) — the same host the
-# user's native client connects to as <bridge-username>%<target-host>,
-# authenticating with the Bridge Password from their Britive profile.
-# Bridge Username defaults to the email local part (alphanumeric only).
+#   BRIDGE_URL, native_host, command, auth_method, bridge_username,
+#   bridge_port, target_username, browser_session
+# BRIDGE_URL is the web host (browser sessions); NATIVE_HOST is what native
+# mysql clients connect to — defaults to the web host for single-endpoint
+# deployments, override when web (ALB) and native (NLB) endpoints differ.
+# The native login is <email>%<aurora-endpoint> (same identity as the owner).
 BRIDGE_HOST="${BRIDGE_URL#https://}"
 BRIDGE_HOST="${BRIDGE_HOST#http://}"
 BRIDGE_HOST="${BRIDGE_HOST%%[:/]*}"
-BRIDGE_USER="${USER_EMAIL%%@*}"
-BRIDGE_USER="${BRIDGE_USER//[^a-zA-Z0-9]/}"
-NATIVE_USER="${BRIDGE_USER}%${MYSQL_URL}"
-COMMAND="mysql -h ${BRIDGE_HOST} -P ${NATIVE_PORT} -u ${NATIVE_USER} -p ${DB_NAME}"
-BROWSER_SESSION="https://${BRIDGE_HOST}/connect?transaction_id=${TRANSACTION_ID}"
+NATIVE_HOST="${NATIVE_HOST:-${BRIDGE_HOST}}"
+NATIVE_USER="${USER_EMAIL}%${MYSQL_URL}"
+COMMAND="mysql -h ${NATIVE_HOST} -P ${NATIVE_PORT} -u '${NATIVE_USER}' -p ${DB_NAME}"
+BROWSER_SESSION="https://${BRIDGE_HOST}/db/#transaction_id=${TRANSACTION_ID}"
 
 jq -n \
   --arg BRIDGE_URL "$BRIDGE_HOST" \
+  --arg native_host "$NATIVE_HOST" \
   --arg command "$COMMAND" \
+  --arg auth_method "$AUTH_METHOD" \
   --arg bridge_username "$NATIVE_USER" \
   --arg bridge_port "$NATIVE_PORT" \
   --arg target_username "$MYSQL_USER" \
   --arg browser_session "$BROWSER_SESSION" \
-  --arg token "$TOKEN" \
-  '{BRIDGE_URL: $BRIDGE_URL, command: $command,
-    bridge_username: $bridge_username, bridge_port: $bridge_port,
-    target_username: $target_username, browser_session: $browser_session,
-    token: $token}'
+  '{BRIDGE_URL: $BRIDGE_URL, native_host: $native_host, command: $command,
+    auth_method: $auth_method, bridge_username: $bridge_username,
+    bridge_port: $bridge_port, target_username: $target_username,
+    browser_session: $browser_session}'
 
 finish 0

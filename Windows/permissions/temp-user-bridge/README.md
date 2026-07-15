@@ -5,12 +5,14 @@ Britive Bridge (v2)**.
 
 On checkout, a temporary local Windows user is created on the target (via WinRM
 or SSH) with a random password, and an `rdp` checkout is registered with the
-Bridge. The user connects with a **native RDP client on their workstation**
-(Microsoft Remote Desktop, mstsc), pointed at the Bridge's RDP listener, and
-authenticates with the **Bridge Username/Password set on their Britive profile**
-(Manage Account → Bridge Attributes) — or opens the in-browser desktop. The
-Windows account password never leaves the broker/Bridge, and the session is
-recorded as screen video.
+Bridge carrying the caller's **bridge credential**
+(`native_auth=bridge_credentials`). The user connects with a **native RDP client
+on their workstation** (Microsoft Remote Desktop, mstsc), pointed at the
+Bridge's RDP listener, and authenticates with the **Bridge Username/Password set
+on their Britive profile** (Manage Account → Bridge Attributes) — the broker
+injects these to the script as `BRIDGE_AUTH_*` env vars — or opens the
+in-browser desktop. The Windows account password never leaves the broker/Bridge,
+and the session is recorded as screen video.
 
 On checkin, the Bridge checkout is deleted first (closing the proxy session),
 then the temp user is removed from its groups and deleted.
@@ -30,13 +32,14 @@ then the temp user is removed from its groups and deleted.
 
 The checkout returns everything needed:
 
-- **Native RDP client** — `command` (`mstsc /v:<bridge-host>:3389` — the
-  port the ECS deployment's NLB exposes for RDP), username
-  `<bridge-username>%<target-host>`, password = the Bridge Password from the
-  user's Britive profile (Manage Account → Bridge Attributes). The Bridge
-  Username defaults to the email local part, alphanumeric only.
+- **Native RDP client** — `command` (`mstsc /v:<native-host>:3389` — the port
+  the ECS deployment's NLB exposes for RDP; `native_host` defaults to the web
+  host, set `NATIVE_HOST` when they differ), username `<email>%<target-host>`
+  where `<email>` is the user's Britive identity (`BRITIVE_USER_EMAIL`) — must
+  equal the checkout owner / SSO identity, not the profile "Bridge Username"
+  field. Password = the Bridge Password from the profile (`BRIDGE_AUTH_PASSWORD`).
 - **Browser** — `{{browser_session}}` opens the in-browser desktop
-  (`https://<bridge-host>/connect?transaction_id=<TRX>`).
+  (`https://<bridge-host>/rdp/#transaction_id=<TRX>`).
 
 The Bridge's native RDP listener requires a TLS certificate
 (`rdp.native.tls_cert` / `tls_key`) — RDP clients expect a certificate-backed
@@ -53,13 +56,15 @@ connection.
 | `BRITIVE_USER_EMAIL` | Requesting user's email — local part becomes the Windows username (SAM-safe, max 20 chars) |
 | `TRX` | Britive transaction ID for this checkout |
 | `TARGET_HOST` | Hostname or IP of the Windows RDP target |
-| `BRIDGE_URL` | Bridge hostname users connect to (e.g. `bridge.example.com`) — **checkout only** |
+| `BRIDGE_URL` | Bridge web hostname (browser sessions), e.g. `bridge.example.com` — **checkout only** |
 | `EXPIRATION` | Session duration in seconds — **checkout only** |
+| `BRIDGE_AUTH_PASSWORD` | Bridge password from the profile; broker-injected. Entered at the RDP client credential prompt. The native login username is the user's email (`BRITIVE_USER_EMAIL`), not a separate bridge username |
 
 ### Optional (with defaults)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `NATIVE_HOST` | `BRIDGE_URL` host | Hostname native RDP clients connect to, when it differs from the web host (web on ALB, native listeners on NLB) |
 | `TARGET_PORT` | `3389` | RDP port on the target |
 | `TARGET_DOMAIN` | — | Windows/AD domain for the RDP login |
 | `NATIVE_PORT` | `3389` | Port of the Bridge's native RDP listener |
@@ -92,7 +97,8 @@ connection.
    password), tags it `bridge:<TRX>`, adds it to `LOCAL_GROUP`.
 4. Registers an `rdp` checkout with the Bridge
    (`broker-bridge-api.sh checkout-create`) carrying the account credentials,
-   `rdp_security` settings, and expiry.
+   `rdp_security` settings, expiry, and the bridge credential
+   (`native_auth=bridge_credentials` + `bridge_auth_password`).
 5. Returns JSON in the standard Bridge checkout schema (same keys as the
    Linux SSH and MySQL bridge checkouts, so one response template covers
    all of them):
@@ -100,18 +106,19 @@ connection.
    ```json
    {
      "BRIDGE_URL": "bridge.example.com",
+     "native_host": "bridge.example.com",
      "command": "mstsc /v:bridge.example.com:3389",
-     "bridge_username": "bobcorp%win-jump.corp.local",
+     "auth_method": "password",
+     "bridge_username": "alice@corp%win-jump.corp.local",
      "bridge_port": "3389",
      "target_username": "bobcorp",
-     "browser_session": "https://bridge.example.com/connect?transaction_id=<TRX>",
-     "token": "<token>"
+     "browser_session": "https://bridge.example.com/rdp/#transaction_id=<TRX>"
    }
    ```
 
-   Surface `{{command}}`, `{{bridge_username}}`, and `{{BRIDGE_URL}}` in the
-   response template; the password is the Bridge Password from the user's
-   Britive profile. `{{browser_session}}` opens the in-browser desktop.
+   Surface `{{command}}` and `{{bridge_username}}` in the response template;
+   the password is the Bridge Password from the user's Britive profile.
+   `{{browser_session}}` opens the in-browser desktop.
 
 ### Checkin (`checkin_rdp_bridge.sh`)
 
@@ -170,8 +177,9 @@ toggles — add to the payload in `checkout_rdp_bridge.sh` as needed.
 
 - The Windows account password is generated at checkout, passed to the Bridge
   as `target_password`, and never returned to the user.
-- The user authenticates to the Bridge with the Bridge Username/Password from
-  their Britive profile; the checkout itself dies with the transaction on
+- The bridge password (`BRIDGE_AUTH_PASSWORD`) comes from the user's Britive
+  profile via the broker and is registered on the checkout as
+  `bridge_auth_password`; the checkout dies with the transaction on
   checkin or expiry.
 - `RDP_SECURITY=nla` (default) enforces Network Level Authentication to the
   target.

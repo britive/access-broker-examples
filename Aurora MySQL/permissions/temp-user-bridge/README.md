@@ -3,12 +3,14 @@
 Checkout / checkin scripts for JIT Aurora MySQL access **proxied through the Britive Bridge**.
 
 On checkout, a temporary MySQL user is created with a random password, and a
-`mysql` database checkout is registered with the Bridge. The user connects with
+`mysql` database checkout is registered with the Bridge carrying the caller's
+**bridge credential** (`native_auth=bridge_credentials`). The user connects with
 their **local `mysql` client (or DBeaver, etc.) on their workstation**, pointed
 at the Bridge's native MySQL listener, and authenticates with the **Bridge
 Username/Password set on their Britive profile** (Manage Account → Bridge
-Attributes). The real MySQL credentials never leave the broker/Bridge — the
-session is fully brokered and recorded.
+Attributes) — the broker injects these to the script as `BRIDGE_AUTH_*` env
+vars. The real MySQL credentials never leave the broker/Bridge — the session is
+fully brokered and recorded.
 
 On checkin, the MySQL user is dropped and the Bridge checkout is deleted, which
 immediately terminates any active session.
@@ -29,16 +31,20 @@ immediately terminates any active session.
 The checkout returns everything needed for a native connection:
 
 ```
-mysql -h bridge.example.com -P 3306 -u <bridge-username>%<aurora-endpoint> -p <db-name>
+mysql -h <native-host> -P 3306 -u '<email>%<aurora-endpoint>' -p <db-name>
 ```
 
-- **Host / port** — the Bridge's native MySQL listener, not the database.
-- **Username** — `<bridge-username>%<target-host>` so the Bridge can match the
-  checkout and route the session to the approved target. The Bridge Username
-  comes from the user's Britive profile (Manage Account → Bridge Attributes)
-  and defaults to the email local part, alphanumeric only.
-- **Password** — the Bridge Password the user set on their Britive profile.
-  Not generated or returned by the checkout script.
+- **Host / port** — `native_host:NATIVE_PORT`, the Bridge's native MySQL
+  listener, not the database. `native_host` defaults to the web host
+  (`BRIDGE_URL`); set `NATIVE_HOST` when web (ALB) and native (NLB) endpoints
+  differ.
+- **Username** — `<email>%<target-host>` where `<email>` is the user's Britive
+  identity (`user`). The Bridge matches this against the checkout's owner to
+  route the session — it must equal the checkout owner / SSO identity, **not**
+  the profile "Bridge Username" field.
+- **Password** — the Bridge Password from the user's Britive profile
+  (`BRIDGE_AUTH_PASSWORD`), registered on the checkout; the user types it at the
+  mysql password prompt.
 
 GUI clients (DBeaver, MySQL Workbench) work the same way — same host, port,
 username format, and password.
@@ -56,13 +62,15 @@ username format, and password.
 | `dburl` | RDS / Aurora endpoint hostname |
 | `secret` | AWS Secrets Manager secret ID holding admin `{username, password}` |
 | `TRX` | Britive transaction ID for this checkout |
-| `BRIDGE_URL` | Bridge hostname users connect to (e.g. `bridge.example.com`) — **checkout only** |
+| `BRIDGE_URL` | Bridge web hostname (browser sessions), e.g. `bridge.example.com` — **checkout only** |
 | `EXPIRATION` | Session duration in seconds — **checkout only** |
+| `BRIDGE_AUTH_PASSWORD` | Bridge password from the profile; broker-injected. Typed at the mysql password prompt. The native login username is the user's email (`user`), not a separate bridge username |
 
 ### Optional (with defaults)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `NATIVE_HOST` | `BRIDGE_URL` host | Hostname native mysql clients connect to, when it differs from the web host (web on ALB, native listeners on NLB) |
 | `DB_NAME` | `systemdb` | Database the `GRANT ALL` applies to |
 | `DB_PORT` | `3306` | MySQL port on the Aurora endpoint |
 | `NATIVE_PORT` | `3306` | Port of the Bridge's native MySQL listener |
@@ -83,8 +91,9 @@ username format, and password.
    `CREATE USER` + `GRANT ALL ON <DB_NAME>.*`.
 4. Registers a `mysql` checkout with the Bridge
    (`broker-bridge-api.sh checkout-create`) containing the target endpoint,
-   temp user credentials, and `target_tls` setting. If registration fails,
-   the temp user is dropped.
+   temp user credentials, `target_tls`, and the bridge credential
+   (`native_auth=bridge_credentials` + `bridge_auth_password`). If registration
+   fails, the temp user is dropped.
 5. Returns JSON in the standard Bridge checkout schema (same keys as the
    Linux SSH and Windows RDP bridge checkouts, so one response template
    covers all of them):
@@ -92,19 +101,20 @@ username format, and password.
    ```json
    {
      "BRIDGE_URL": "bridge.example.com",
-     "command": "mysql -h bridge.example.com -P 3306 -u alicecorp%mydb.cluster-abc.us-west-2.rds.amazonaws.com -p systemdb",
-     "bridge_username": "alicecorp%mydb.cluster-abc.us-west-2.rds.amazonaws.com",
+     "native_host": "bridge.example.com",
+     "command": "mysql -h bridge.example.com -P 3306 -u 'alice@corp%mydb.cluster-abc.us-west-2.rds.amazonaws.com' -p systemdb",
+     "auth_method": "password",
+     "bridge_username": "alice@corp%mydb.cluster-abc.us-west-2.rds.amazonaws.com",
      "bridge_port": "3306",
      "target_username": "alicecorp",
-     "browser_session": "https://bridge.example.com/connect?transaction_id=<TRX>",
-     "token": "<token>"
+     "browser_session": "https://bridge.example.com/db/#transaction_id=<TRX>"
    }
    ```
 
-   A response template can surface `{{command}}`, `{{BRIDGE_URL}}`, and
-   `{{bridge_username}}` directly; the password prompt takes the Bridge
-   Password from the user's Britive profile. `{{browser_session}}` opens the
-   in-browser SQL window when browser mode is enabled on the Bridge.
+   A response template can surface `{{command}}` and `{{bridge_username}}`
+   directly; the password prompt takes the Bridge Password from the user's
+   Britive profile. `{{browser_session}}` opens the in-browser SQL window when
+   browser mode is enabled on the Bridge.
 
 ### Checkin (`checkin_mysql_bridge.sh`)
 
@@ -144,8 +154,9 @@ and users must be able to reach the Bridge on `NATIVE_PORT`.
 
 - The temp MySQL user's password is generated at checkout, passed to the Bridge
   as `target_password`, and never returned to the user.
-- The user authenticates to the Bridge with the Bridge Username/Password from
-  their Britive profile; the checkout itself dies with the transaction on
-  checkin or expiry (`expires_at`).
+- The bridge password (`BRIDGE_AUTH_PASSWORD`) comes from the user's Britive
+  profile via the broker and is registered on the checkout as
+  `bridge_auth_password`; the checkout dies with the transaction on checkin or
+  expiry (`expires_at`).
 - `target_tls=true` keeps the Bridge → Aurora hop encrypted; the client →
   Bridge hop is handled by the Bridge's own TLS.

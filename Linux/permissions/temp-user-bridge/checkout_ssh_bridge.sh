@@ -3,24 +3,36 @@
 # Britive checkout script: temp Linux user + Bridge (v2) proxied SSH session
 #
 # Creates a temporary Linux user on the target host with a one-time ed25519
-# key (Bridge -> target auth), then registers an SSH checkout with the Bridge.
-# The user connects with their local ssh client through the Bridge's native
-# SSH listener, or through the browser terminal. The one-time private key
-# never leaves the broker/Bridge.
+# key (Bridge -> target auth), then registers an SSH checkout with the Bridge
+# using the caller's BRIDGE CREDENTIALS (native_auth=bridge_credentials).
 #
-# Bridge authentication: the user authenticates to the Bridge proxy with the
-# Bridge Username/Password (or Bridge SSH Key) set on their Britive profile
-# (Manage Account -> Bridge Attributes) -- no per-checkout Bridge credentials
-# are generated here.
+# Bridge credential (provided by the broker as env vars):
+#   BRIDGE_AUTH_PASSWORD - bridge password the user types at the native
+#                          password prompt. REQUIRED: the Bridge rejects a
+#                          bridge_credentials checkout without it.
+#   BRIDGE_AUTH_PUBKEY   - user's SSH PUBLIC key (openssh format). OPTIONAL:
+#                          when set, it is added as user_public_key so the user
+#                          may authenticate with their own key in addition to
+#                          the password.
+#
+# Identity: the native login username is the user's Britive identity
+# (BRITIVE_USER_EMAIL) -- the SAME value as the checkout owner. The Bridge
+# matches BOTH the native ssh username (before %) AND the browser SSO identity
+# against the checkout's "username" field, so they must be identical. The
+# profile "Bridge Username" field is NOT used for matching.
 #
 # Required env vars (set by Britive Resource Type / Profile):
-#   BRITIVE_USER_EMAIL - requesting user's email (username derived from local part)
+#   BRITIVE_USER_EMAIL - requesting user's email (temp Linux username derived
+#                        from the local part)
 #   TRX                - Britive transaction ID
 #   TARGET_HOST        - SSH target host
-#   BRIDGE_URL         - Bridge hostname users connect to (e.g. bridge.example.com)
+#   BRIDGE_URL         - Bridge web hostname (browser sessions)
 #   EXPIRATION         - Checkout duration in seconds
 #
 # Optional env vars (with defaults):
+#   NATIVE_HOST        - hostname native ssh clients connect to, when it
+#                        differs from the web host (e.g. web on an ALB,
+#                        native listeners on an NLB). Default: BRIDGE_URL host.
 #   TARGET_PORT        - SSH port on the target (default: 22)
 #   NATIVE_PORT        - Bridge native SSH listener port (default: 2222)
 #   BRITIVE_SUDO       - 1 to grant passwordless sudo to the temp user (default: 0)
@@ -42,6 +54,8 @@ TRANSACTION_ID="${TRX:-}"
 TARGET_HOST="${TARGET_HOST:-}"
 TARGET_PORT="${TARGET_PORT:-22}"
 NATIVE_PORT="${NATIVE_PORT:-2222}"
+BRIDGE_AUTH_PASSWORD="${BRIDGE_AUTH_PASSWORD:-}"
+BRIDGE_AUTH_PUBKEY="${BRIDGE_AUTH_PUBKEY:-}"
 PROVISION_SUDO="${BRITIVE_SUDO:-0}"
 PROVISION_USER="${PROVISION_USER:-britivebroker}"
 PROVISION_HOST="${PROVISION_HOST:-${TARGET_HOST}}"
@@ -52,7 +66,7 @@ BROKER_API="${BROKER_API:-/opt/britive-broker/scripts/broker-bridge-api.sh}"
 
 fail() { echo "error: $1" >&2; exit 1; }
 
-for var in BRITIVE_USER_EMAIL TRX TARGET_HOST BRIDGE_URL EXPIRATION; do
+for var in BRITIVE_USER_EMAIL TRX TARGET_HOST BRIDGE_URL EXPIRATION BRIDGE_AUTH_PASSWORD; do
   eval "val=\${$var:-}"
   [ -n "$val" ] || fail "required env var missing: $var"
 done
@@ -169,59 +183,76 @@ REMOTE
 }
 
 # --- Register the Bridge checkout ---
-TOKEN="$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 43)"
+# native_auth=bridge_credentials always requires bridge_auth_password -- the
+# Bridge rejects the checkout without it. When BRIDGE_AUTH_PUBKEY is set it is
+# added as user_public_key so the user may authenticate with their own key in
+# addition to the password.
 EXPIRES_AT="$(($(date +%s) + EXPIRATION))"
 PRIVATE_KEY_JSON="$(jq -Rs . < "$KEYDIR/key")"
 
-cat > "$PAYLOAD_FILE" <<EOF
-{
-  "transaction_id": "${TRANSACTION_ID}",
-  "protocol": "ssh",
-  "username": "${USER_EMAIL}",
-  "target_host": "${TARGET_HOST}",
-  "target_port": ${TARGET_PORT},
-  "target_username": "${TARGET_USERNAME}",
-  "private_key": ${PRIVATE_KEY_JSON},
-  "record_session": true,
-  "expires_at": ${EXPIRES_AT},
-  "token": "${TOKEN}"
-}
-EOF
+if [ -n "$BRIDGE_AUTH_PUBKEY" ]; then
+  AUTH_METHOD="pubkey"
+  AUTH_FIELDS="$(jq -n --arg p "$BRIDGE_AUTH_PASSWORD" --arg k "$BRIDGE_AUTH_PUBKEY" \
+    '{native_auth:"bridge_credentials", bridge_auth_password:$p, user_public_key:$k}')"
+else
+  AUTH_METHOD="password"
+  AUTH_FIELDS="$(jq -n --arg p "$BRIDGE_AUTH_PASSWORD" \
+    '{native_auth:"bridge_credentials", bridge_auth_password:$p}')"
+fi
+
+jq -n \
+  --arg transaction_id "$TRANSACTION_ID" \
+  --arg username "$USER_EMAIL" \
+  --arg target_host "$TARGET_HOST" \
+  --argjson target_port "$TARGET_PORT" \
+  --arg target_username "$TARGET_USERNAME" \
+  --argjson private_key "$PRIVATE_KEY_JSON" \
+  --argjson expires_at "$EXPIRES_AT" \
+  --argjson auth "$AUTH_FIELDS" \
+  '{transaction_id: $transaction_id,
+    protocol: "ssh",
+    username: $username,
+    target_host: $target_host,
+    target_port: $target_port,
+    target_username: $target_username,
+    private_key: $private_key,
+    record_session: true,
+    expires_at: $expires_at} + $auth' > "$PAYLOAD_FILE"
+# NOTE: "username" is the checkout OWNER — the Britive/SSO identity the Bridge
+# matches against for BOTH browser sessions and the native ssh login. It and the
+# native login username (bridge_username) must be the same value (USER_EMAIL).
 
 if ! "${BROKER_API}" checkout-create --file "$PAYLOAD_FILE" >/dev/null; then
   rollback
   fail "Bridge checkout registration failed"
 fi
 
-echo "[checkout] Bridge session registered" >&2
+echo "[checkout] Bridge session registered (auth: ${AUTH_METHOD})" >&2
 
 # --- Output connection details ---
-# Standard Bridge checkout output schema (shared across ssh/rdp/db checkouts
-# so a single response template works for all):
-#   BRIDGE_URL, command, bridge_username, bridge_port, target_username,
-#   browser_session, token
-# BRIDGE_URL is the Bridge hostname (bridge.example.com) — the same host the
-# user's native client connects to: ssh <bridge-username>%<target-host>@BRIDGE_URL
-# authenticating with the Bridge Password/SSH Key from their Britive profile.
-# Bridge Username defaults to the email local part (alphanumeric only).
+# BRIDGE_URL is the web host (browser sessions); NATIVE_HOST is what native
+# ssh clients connect to — defaults to the web host for single-endpoint
+# deployments, override when web (ALB) and native (NLB) endpoints differ.
 BRIDGE_HOST="${BRIDGE_URL#https://}"
 BRIDGE_HOST="${BRIDGE_HOST#http://}"
 BRIDGE_HOST="${BRIDGE_HOST%%[:/]*}"
-BRIDGE_USER="${USER_EMAIL%%@*}"
-BRIDGE_USER="${BRIDGE_USER//[^a-zA-Z0-9]/}"
-NATIVE_USER="${BRIDGE_USER}%${TARGET_HOST}"
-COMMAND="ssh -p ${NATIVE_PORT} ${NATIVE_USER}@${BRIDGE_HOST}"
-BROWSER_SESSION="https://${BRIDGE_HOST}/connect?transaction_id=${TRANSACTION_ID}"
+NATIVE_HOST="${NATIVE_HOST:-${BRIDGE_HOST}}"
+NATIVE_USER="${USER_EMAIL}%${TARGET_HOST}"
+# Use -l for the username: it contains '@' (email) and '%' (target separator),
+# so embedding it as user@host would be ambiguous. -l passes it verbatim.
+COMMAND="ssh -p ${NATIVE_PORT} -l '${NATIVE_USER}' ${NATIVE_HOST}"
+BROWSER_SESSION="https://${BRIDGE_HOST}/ssh/#transaction_id=${TRANSACTION_ID}"
 
 jq -n \
   --arg BRIDGE_URL "$BRIDGE_HOST" \
+  --arg native_host "$NATIVE_HOST" \
   --arg command "$COMMAND" \
+  --arg auth_method "$AUTH_METHOD" \
   --arg bridge_username "$NATIVE_USER" \
   --arg bridge_port "$NATIVE_PORT" \
   --arg target_username "$TARGET_USERNAME" \
   --arg browser_session "$BROWSER_SESSION" \
-  --arg token "$TOKEN" \
-  '{BRIDGE_URL: $BRIDGE_URL, command: $command,
-    bridge_username: $bridge_username, bridge_port: $bridge_port,
-    target_username: $target_username, browser_session: $browser_session,
-    token: $token}'
+  '{BRIDGE_URL: $BRIDGE_URL, native_host: $native_host, command: $command,
+    auth_method: $auth_method, bridge_username: $bridge_username,
+    bridge_port: $bridge_port, target_username: $target_username,
+    browser_session: $browser_session}'
