@@ -7,9 +7,10 @@ On checkout, a temporary local Windows user is created on the target (via WinRM
 or SSH) with a random password, and an `rdp` checkout is registered with the
 Bridge. The user connects with a **native RDP client on their workstation**
 (Microsoft Remote Desktop, mstsc), pointed at the Bridge's RDP listener, and
-authenticates with a **per-checkout Bridge password** — or opens the in-browser
-desktop. The Windows account password never leaves the broker/Bridge, and the
-session is recorded as screen video.
+authenticates with the **Bridge Username/Password set on their Britive profile**
+(Manage Account → Bridge Attributes) — or opens the in-browser desktop. The
+Windows account password never leaves the broker/Bridge, and the session is
+recorded as screen video.
 
 On checkin, the Bridge checkout is deleted first (closing the proxy session),
 then the temp user is removed from its groups and deleted.
@@ -29,12 +30,13 @@ then the temp user is removed from its groups and deleted.
 
 The checkout returns everything needed:
 
-- **Native RDP client** — connect to `rdp_address` (`<bridge-host>:3389` —
-  the port the ECS deployment's NLB exposes for RDP), username
-  `<email>%<target-host>`, password = the per-checkout Bridge password.
-  With `NATIVE_AUTH=ldap` the user enters their directory password instead.
-- **Browser** — `{{url}}` opens the in-browser desktop
-  (`/connect?transaction_id=<TRX>`).
+- **Native RDP client** — `command` (`mstsc /v:<bridge-host>:3389` — the
+  port the ECS deployment's NLB exposes for RDP), username
+  `<bridge-username>%<target-host>`, password = the Bridge Password from the
+  user's Britive profile (Manage Account → Bridge Attributes). The Bridge
+  Username defaults to the email local part, alphanumeric only.
+- **Browser** — `{{browser_session}}` opens the in-browser desktop
+  (`https://<bridge-host>/connect?transaction_id=<TRX>`).
 
 The Bridge's native RDP listener requires a TLS certificate
 (`rdp.native.tls_cert` / `tls_key`) — RDP clients expect a certificate-backed
@@ -51,7 +53,7 @@ connection.
 | `BRITIVE_USER_EMAIL` | Requesting user's email — local part becomes the Windows username (SAM-safe, max 20 chars) |
 | `TRX` | Britive transaction ID for this checkout |
 | `TARGET_HOST` | Hostname or IP of the Windows RDP target |
-| `BRIDGE_URL` | Public base URL of the Bridge — **checkout only** |
+| `BRIDGE_URL` | Bridge hostname users connect to (e.g. `bridge.example.com`) — **checkout only** |
 | `EXPIRATION` | Session duration in seconds — **checkout only** |
 
 ### Optional (with defaults)
@@ -61,7 +63,6 @@ connection.
 | `TARGET_PORT` | `3389` | RDP port on the target |
 | `TARGET_DOMAIN` | — | Windows/AD domain for the RDP login |
 | `NATIVE_PORT` | `3389` | Port of the Bridge's native RDP listener |
-| `NATIVE_AUTH` | `bridge_credentials` | `bridge_credentials` (generated password) or `ldap` |
 | `RDP_SECURITY` | `nla` | `any`, `nla`, `tls`, or `rdp` |
 | `RDP_ENABLE_DRIVE` | `false` | Allow drive redirection (file copy) |
 | `BRITIVE_FIRST_NAME` / `BRITIVE_LAST_NAME` | — | Account display name (falls back to email local part) |
@@ -91,24 +92,26 @@ connection.
    password), tags it `bridge:<TRX>`, adds it to `LOCAL_GROUP`.
 4. Registers an `rdp` checkout with the Bridge
    (`broker-bridge-api.sh checkout-create`) carrying the account credentials,
-   `rdp_security`, `native_auth` settings, and expiry.
-5. Returns JSON for the response template:
+   `rdp_security` settings, and expiry.
+5. Returns JSON in the standard Bridge checkout schema (same keys as the
+   Linux SSH and MySQL bridge checkouts, so one response template covers
+   all of them):
 
    ```json
    {
-     "token": "<token>",
-     "url": "https://bridge.example.com/connect?transaction_id=<TRX>",
-     "rdp_address": "bridge.example.com:3389",
-     "bridge_username": "bob@corp%win-jump.corp.local",
-     "bridge_password": "<generated>",
-     "bridge_host": "bridge.example.com",
+     "BRIDGE_URL": "bridge.example.com",
+     "command": "mstsc /v:bridge.example.com:3389",
+     "bridge_username": "bobcorp%win-jump.corp.local",
      "bridge_port": "3389",
-     "target_username": "bobcorp"
+     "target_username": "bobcorp",
+     "browser_session": "https://bridge.example.com/connect?transaction_id=<TRX>",
+     "token": "<token>"
    }
    ```
 
-   Surface `{{rdp_address}}` and `{{bridge_password}}` in the response
-   template; `{{url}}` for the browser desktop.
+   Surface `{{command}}`, `{{bridge_username}}`, and `{{BRIDGE_URL}}` in the
+   response template; the password is the Bridge Password from the user's
+   Britive profile. `{{browser_session}}` opens the in-browser desktop.
 
 ### Checkin (`checkin_rdp_bridge.sh`)
 
@@ -167,8 +170,9 @@ toggles — add to the payload in `checkout_rdp_bridge.sh` as needed.
 
 - The Windows account password is generated at checkout, passed to the Bridge
   as `target_password`, and never returned to the user.
-- The Bridge password is per-checkout and dies with the transaction on checkin
-  or expiry.
+- The user authenticates to the Bridge with the Bridge Username/Password from
+  their Britive profile; the checkout itself dies with the transaction on
+  checkin or expiry.
 - `RDP_SECURITY=nla` (default) enforces Network Level Authentication to the
   target.
 - Checkin order matters: Bridge session is revoked **before** the account is

@@ -4,22 +4,24 @@
 #
 # Creates a temporary local Windows user (via WinRM or SSH), then registers an
 # RDP checkout with the Bridge. The user connects with a native RDP client
-# pointed at the Bridge's RDP listener using a per-checkout Bridge password,
-# or through the in-browser desktop. The Windows account password never
-# leaves the broker/Bridge.
+# pointed at the Bridge's RDP listener, or through the in-browser desktop.
+# The Windows account password never leaves the broker/Bridge.
+#
+# Bridge authentication: the user authenticates to the Bridge proxy with the
+# Bridge Username/Password set on their Britive profile (Manage Account ->
+# Bridge Attributes) -- no per-checkout Bridge credentials are generated here.
 #
 # Required env vars (set by Britive Resource Type / Profile):
 #   BRITIVE_USER_EMAIL - requesting user's email (username derived from local part)
 #   TRX                - Britive transaction ID
 #   TARGET_HOST        - Windows RDP target host
-#   BRIDGE_URL         - Public Bridge base URL (e.g. https://bridge.example.com)
+#   BRIDGE_URL         - Bridge hostname users connect to (e.g. bridge.example.com)
 #   EXPIRATION         - Checkout duration in seconds
 #
 # Optional env vars (with defaults):
 #   TARGET_PORT         - RDP port on the target (default: 3389)
 #   TARGET_DOMAIN       - Windows/AD domain for the RDP login (default: none)
 #   NATIVE_PORT         - Bridge native RDP listener port (default: 3389)
-#   NATIVE_AUTH         - bridge_credentials (default) or ldap
 #   RDP_SECURITY        - any | nla | tls | rdp (default: nla)
 #   RDP_ENABLE_DRIVE    - true/false, allow drive redirection (default: false)
 #   BRITIVE_FIRST_NAME / BRITIVE_LAST_NAME - used for the account display name
@@ -43,7 +45,6 @@ TARGET_HOST="${TARGET_HOST:-}"
 TARGET_PORT="${TARGET_PORT:-3389}"
 TARGET_DOMAIN="${TARGET_DOMAIN:-}"
 NATIVE_PORT="${NATIVE_PORT:-3389}"
-NATIVE_AUTH="${NATIVE_AUTH:-bridge_credentials}"
 RDP_SECURITY="${RDP_SECURITY:-nla}"
 RDP_ENABLE_DRIVE="${RDP_ENABLE_DRIVE:-false}"
 BRIDGE_URL="${BRIDGE_URL:-}"
@@ -250,18 +251,6 @@ TOKEN="$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 43)"
 EXPIRES_AT="$(($(date +%s) + EXPIRATION))"
 PASSWORD_JSON="$(jq -Rn --arg p "$PASSWORD" '$p')"
 
-# bridge_credentials: user authenticates to the Bridge proxy with a
-# per-checkout password generated here. ldap: user authenticates with
-# their own directory password; no password is generated.
-if [ "$NATIVE_AUTH" = "bridge_credentials" ]; then
-    BRIDGE_PASSWORD="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)"
-    AUTH_FIELDS="\"native_auth\": \"bridge_credentials\",
-  \"bridge_auth_password\": \"${BRIDGE_PASSWORD}\","
-else
-    BRIDGE_PASSWORD=""
-    AUTH_FIELDS="\"native_auth\": \"${NATIVE_AUTH}\","
-fi
-
 DOMAIN_FIELD=""
 if [ -n "$TARGET_DOMAIN" ]; then
     DOMAIN_FIELD="\"target_domain\": \"${TARGET_DOMAIN}\","
@@ -279,7 +268,6 @@ cat > "$PAYLOAD_FILE" <<EOF
   ${DOMAIN_FIELD}
   "rdp_security": "${RDP_SECURITY}",
   "rdp_enable_drive": ${RDP_ENABLE_DRIVE},
-  ${AUTH_FIELDS}
   "record_session": true,
   "expires_at": ${EXPIRES_AT},
   "token": "${TOKEN}"
@@ -291,22 +279,32 @@ EOF
 echo "[checkout] Bridge session registered" >&2
 
 # --- Output connection details ---
+# Standard Bridge checkout output schema (shared across ssh/rdp/db checkouts
+# so a single response template works for all):
+#   BRIDGE_URL, command, bridge_username, bridge_port, target_username,
+#   browser_session, token
+# BRIDGE_URL is the Bridge hostname (bridge.example.com) — the same host the
+# user's RDP client connects to as <bridge-username>%<target-host>,
+# authenticating with the Bridge Password from their Britive profile.
+# Bridge Username defaults to the email local part (alphanumeric only).
 BRIDGE_HOST="${BRIDGE_URL#https://}"
 BRIDGE_HOST="${BRIDGE_HOST#http://}"
 BRIDGE_HOST="${BRIDGE_HOST%%[:/]*}"
-NATIVE_USER="${USER_EMAIL}%${TARGET_HOST}"
-URL="${BRIDGE_URL}/connect?transaction_id=${TRANSACTION_ID}"
+BRIDGE_USER="${USER_EMAIL%%@*}"
+BRIDGE_USER="${BRIDGE_USER//[^a-zA-Z0-9]/}"
+NATIVE_USER="${BRIDGE_USER}%${TARGET_HOST}"
+COMMAND="mstsc /v:${BRIDGE_HOST}:${NATIVE_PORT}"
+BROWSER_SESSION="https://${BRIDGE_HOST}/connect?transaction_id=${TRANSACTION_ID}"
 
 jq -n \
-  --arg token "$TOKEN" \
-  --arg url "$URL" \
-  --arg rdp_address "${BRIDGE_HOST}:${NATIVE_PORT}" \
+  --arg BRIDGE_URL "$BRIDGE_HOST" \
+  --arg command "$COMMAND" \
   --arg bridge_username "$NATIVE_USER" \
-  --arg bridge_password "$BRIDGE_PASSWORD" \
-  --arg bridge_host "$BRIDGE_HOST" \
   --arg bridge_port "$NATIVE_PORT" \
   --arg target_username "$USERNAME" \
-  '{token: $token, url: $url, rdp_address: $rdp_address,
-    bridge_username: $bridge_username, bridge_password: $bridge_password,
-    bridge_host: $bridge_host, bridge_port: $bridge_port,
-    target_username: $target_username}'
+  --arg browser_session "$BROWSER_SESSION" \
+  --arg token "$TOKEN" \
+  '{BRIDGE_URL: $BRIDGE_URL, command: $command,
+    bridge_username: $bridge_username, bridge_port: $bridge_port,
+    target_username: $target_username, browser_session: $browser_session,
+    token: $token}'
