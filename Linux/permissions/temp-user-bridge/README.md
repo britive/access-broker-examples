@@ -7,9 +7,10 @@ On checkout, a temporary Linux user is provisioned on the target with a one-time
 `ed25519` key (used only by the Bridge to reach the target), and an `ssh`
 checkout is registered with the Bridge. The user connects with their **local
 `ssh` client on their workstation**, pointed at the Bridge's native SSH
-listener, and authenticates with a **per-checkout Bridge password** — or opens
-the in-browser terminal. The private key never leaves the broker/Bridge, and
-the session is fully brokered and recorded.
+listener, and authenticates with the **Bridge Username/Password (or Bridge SSH
+Key) set on their Britive profile** (Manage Account → Bridge Attributes) — or
+opens the in-browser terminal. The private key never leaves the broker/Bridge,
+and the session is fully brokered and recorded.
 
 On checkin, the Bridge checkout is deleted (terminating any active session),
 then the one-time key and sudoers entry are removed from the target.
@@ -30,21 +31,22 @@ then the one-time key and sudoers entry are removed from the target.
 The checkout returns everything needed:
 
 ```
-ssh -p 2222 '<email>%<target-host>'@<bridge-host>
+ssh -p 2222 <bridge-username>%<target-host>@bridge.example.com
 ```
 
 - **Host / port** — the Bridge's native SSH listener (`2222` by default — the
   port the ECS deployment's NLB exposes for SSH), not the target.
-- **Username** — `<bridge-user>%<target-host>` so the Bridge can match the
-  checkout and route the session to the approved target.
-- **Password** — the per-checkout Bridge password from the checkout response
-  (`bridge_credentials` mode). With `NATIVE_AUTH=ldap` the user enters their
-  own directory password instead.
-- **Key auth (optional)** — set `USER_PUBLIC_KEY` to the user's own SSH public
-  key and they can authenticate to the Bridge with their keypair instead of a
+- **Username** — `<bridge-username>%<target-host>` so the Bridge can match the
+  checkout and route the session to the approved target. The Bridge Username
+  comes from the user's Britive profile (Manage Account → Bridge Attributes)
+  and defaults to the email local part, alphanumeric only.
+- **Password** — the Bridge Password the user set on their Britive profile.
+  Not generated or returned by the checkout script.
+- **Key auth (optional)** — a Bridge SSH Key configured on the Britive profile
+  lets the user authenticate to the Bridge with their keypair instead of a
   password.
-- **Browser** — `{{url}}` opens the in-browser terminal
-  (`/connect?transaction_id=<TRX>`).
+- **Browser** — `{{browser_session}}` opens the in-browser terminal
+  (`https://<bridge-host>/connect?transaction_id=<TRX>`).
 
 ---
 
@@ -57,7 +59,7 @@ ssh -p 2222 '<email>%<target-host>'@<bridge-host>
 | `BRITIVE_USER_EMAIL` | Requesting user's email — local part becomes the Linux username |
 | `TRX` | Britive transaction ID for this checkout |
 | `TARGET_HOST` | Hostname or IP of the SSH target |
-| `BRIDGE_URL` | Public base URL of the Bridge (e.g. `https://bridge.example.com`) — **checkout only** |
+| `BRIDGE_URL` | Bridge hostname users connect to (e.g. `bridge.example.com`) — **checkout only** |
 | `EXPIRATION` | Session duration in seconds — **checkout only** |
 
 ### Optional (with defaults)
@@ -66,8 +68,6 @@ ssh -p 2222 '<email>%<target-host>'@<bridge-host>
 |----------|---------|-------------|
 | `TARGET_PORT` | `22` | SSH port on the target |
 | `NATIVE_PORT` | `2222` | Port of the Bridge's native SSH listener |
-| `NATIVE_AUTH` | `bridge_credentials` | `bridge_credentials` (generated password) or `ldap` (directory password) |
-| `USER_PUBLIC_KEY` | — | User's own SSH public key for key auth to the Bridge |
 | `BRITIVE_SUDO` | `0` | `1` grants the temp user passwordless sudo |
 | `PROVISION_USER` | `britivebroker` | Privileged account used to provision the target |
 | `PROVISION_HOST` | `TARGET_HOST` | Override if provisioning host differs |
@@ -88,26 +88,28 @@ ssh -p 2222 '<email>%<target-host>'@<bridge-host>
 3. SSHes to the target as `PROVISION_USER` and: creates the user if missing,
    installs the public key, optionally writes `/etc/sudoers.d/bridge-<TRX>`.
 4. Registers an `ssh` checkout with the Bridge
-   (`broker-bridge-api.sh checkout-create`) carrying the private key,
-   `native_auth` settings, and expiry. If registration fails, the provisioned
-   key/sudoers entry is rolled back.
-5. Returns JSON for the response template:
+   (`broker-bridge-api.sh checkout-create`) carrying the private key and
+   expiry. If registration fails, the provisioned key/sudoers entry is
+   rolled back.
+5. Returns JSON in the standard Bridge checkout schema (same keys as the
+   MySQL and Windows RDP bridge checkouts, so one response template covers
+   all of them):
 
    ```json
    {
-     "token": "<token>",
-     "url": "https://bridge.example.com/connect?transaction_id=<TRX>",
-     "ssh_command": "ssh -p 2222 'alice@corp%server.internal'@bridge.example.com",
-     "bridge_username": "alice@corp%server.internal",
-     "bridge_password": "<generated>",
-     "bridge_host": "bridge.example.com",
+     "BRIDGE_URL": "bridge.example.com",
+     "command": "ssh -p 2222 alicecorp%server.internal@bridge.example.com",
+     "bridge_username": "alicecorp%server.internal",
      "bridge_port": "2222",
-     "target_username": "alicecorp"
+     "target_username": "alicecorp",
+     "browser_session": "https://bridge.example.com/connect?transaction_id=<TRX>",
+     "token": "<token>"
    }
    ```
 
-   Surface `{{ssh_command}}` and `{{bridge_password}}` in the response
-   template; `{{url}}` for the browser terminal.
+   Surface `{{command}}`, `{{BRIDGE_URL}}`, and `{{bridge_username}}` in the
+   response template; the password prompt takes the Bridge Password from the
+   user's Britive profile. `{{browser_session}}` opens the in-browser terminal.
 
 ### Checkin (`checkin_ssh_bridge.sh`)
 
@@ -159,8 +161,9 @@ must be able to reach the Bridge on `NATIVE_PORT` (ECS NLB exposes `2222`).
 
 - The one-time private key is generated at checkout, passed to the Bridge as
   `private_key`, and never returned to the user.
-- The Bridge password is per-checkout and dies with the transaction on checkin
-  or expiry.
+- The user authenticates to the Bridge with the Bridge Username/Password (or
+  SSH key) from their Britive profile; the checkout itself dies with the
+  transaction on checkin or expiry.
 - Add `allowed_commands` / `blocked_patterns` to the payload for command
   guardrails — but remember command filtering is an audit aid, **not** a
   security control.
