@@ -1,23 +1,23 @@
 # ============================================================
-# Windows VM IAM-Style Broker Scan (remote)
+# Windows VM IAM-Style Broker Scan (remote, provision-cred variant)
 # ============================================================
-# Runs on the Britive broker. Connects to a target Windows VM
-# over WinRM (Invoke-Command), enumerates LOCAL users and groups
-# (and group membership), builds a JSON payload in the Britive
-# Resource Manager schema, and writes it to the broker-supplied
-# output path.
+# Reads broker-injected resource params from RESOURCE_* env vars.
+# NOTE: the broker injects these as PLAINTEXT into the process
+# environment. The base64 form seen in broker logs is only a
+# logging/masking representation — do NOT decode here.
 #
-# Required env var:
-#   BROKER_INJECTED_SCAN_OUTPUT_PATH  – full path for JSON output
+# Broker-injected params (plaintext):
+#   RESOURCE_HOST                 – target VM hostname/IP            (required)
+#   RESOURCE_PROVISION_USERNAME   – WinRM admin user                (default: Administrator)
+#   RESOURCE_PROVISION_PASSWORD   – WinRM admin password            (required)
 #
-# Connection env vars (mirror the local-admin-remote-server scripts):
-#   target (or BRITIVE_REMOTE_HOST)   – target VM hostname/IP   (required)
-#   BRITIVE_REMOTE_USER               – WinRM user (optional; omit to use broker identity)
-#   BRITIVE_REMOTE_PASSWORD           – WinRM password (optional, paired with user)
+# Broker-supplied:
+#   BROKER_INJECTED_SCAN_OUTPUT_PATH – full path for JSON output    (required)
 #
-# Identity IDs use the local account Name so that
-# attribute_resolution.group_membership = "id" resolves correctly.
-# Members reference local user Names; SID is stored in attributes.
+# The provisioning credential is always used (Basic auth) — local admin
+# accounts fail over Negotiate/Kerberos from the broker service context.
+# Basic over HTTP requires WinRM 'AllowUnencrypted=true' on the target
+# (or use HTTPS/5986).
 # ============================================================
 
 try {
@@ -28,9 +28,17 @@ try {
     }
     $outputPath = $env:BROKER_INJECTED_SCAN_OUTPUT_PATH
 
-    $targetComputer = if ($env:target) { $env:target } elseif ($env:BRITIVE_REMOTE_HOST) { $env:BRITIVE_REMOTE_HOST } else { $null }
+    # ---- resolve broker-injected resource params (RESOURCE_*, plaintext) ----
+    $targetComputer = $env:RESOURCE_HOST
     if (-not $targetComputer) {
-        throw "Target computer not set. Provide env var 'target' or 'BRITIVE_REMOTE_HOST'."
+        throw "Target host not set. Provide resource param 'HOST' (env RESOURCE_HOST)."
+    }
+
+    $remoteUser = if ($env:RESOURCE_PROVISION_USERNAME) { $env:RESOURCE_PROVISION_USERNAME } else { "Administrator" }
+
+    $remotePass = $env:RESOURCE_PROVISION_PASSWORD
+    if (-not $remotePass) {
+        throw "Provisioning password not set. Provide resource param 'PROVISION_PASSWORD' (env RESOURCE_PROVISION_PASSWORD)."
     }
 
     Write-Host "Running Windows VM IAM-style broker scan against $targetComputer..."
@@ -43,12 +51,19 @@ try {
         Write-Host "Created output directory: $outputDir"
     }
 
-    # optional explicit credential for WinRM
+    # ---- WinRM invocation params ----
     $invokeParams = @{ ComputerName = $targetComputer }
-    if ($env:BRITIVE_REMOTE_USER -and $env:BRITIVE_REMOTE_PASSWORD) {
-        $secPass = ConvertTo-SecureString $env:BRITIVE_REMOTE_PASSWORD -AsPlainText -Force
-        $invokeParams.Credential = New-Object System.Management.Automation.PSCredential($env:BRITIVE_REMOTE_USER, $secPass)
-    }
+
+    # Fast-fail timeouts: OpenTimeout bounds the WinRM connect so an unreachable
+    # or slow target aborts in ~15s instead of hanging on the default timeouts.
+    $invokeParams.SessionOption = New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 120000 -CancelTimeout 5000
+
+    $secPass = ConvertTo-SecureString $remotePass -AsPlainText -Force
+    $invokeParams.Credential = New-Object System.Management.Automation.PSCredential($remoteUser, $secPass)
+    # Basic auth: local accounts fail over Negotiate/Kerberos from a service
+    # (broker) context with error 0x8009030d. Basic forces a clean local logon.
+    $invokeParams.Authentication = 'Basic'
+    Write-Host "Using provisioning credential (Basic auth) for user: $remoteUser"
 
     $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
@@ -99,6 +114,12 @@ try {
     }
 
     $result = Invoke-Command @invokeParams -ScriptBlock $scriptBlock
+
+    # Guard: a null/empty result means the remote block produced nothing (e.g.
+    # LocalAccounts cmdlets unavailable on an old OS). Fail so it is reported.
+    if (-not $result) {
+        throw "Remote scan against $targetComputer returned no data (target may lack Get-LocalUser/Get-LocalGroup)."
+    }
 
     # ----------------------------------------------------------
     # Build identities
