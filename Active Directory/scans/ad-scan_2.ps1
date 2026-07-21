@@ -1,5 +1,5 @@
 # ============================================================
-# Active Directory IAM-Style Broker Scan – Optimised v3
+# Active Directory IAM-Style Broker Scan – Optimized v3
 # ============================================================
 # Required env var:
 #   BROKER_INJECTED_SCAN_OUTPUT_PATH
