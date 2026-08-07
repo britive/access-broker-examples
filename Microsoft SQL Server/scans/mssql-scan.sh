@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# Britive MySQL scan: accounts and roles -> Resource Manager JSON
+# Britive MSSQL scan: server logins and server roles -> Resource Manager JSON
 # ==============================================================================
-# Enumerates MySQL/Aurora accounts and roles over the wire from the Bridge broker
-# and writes the Resource Manager scan payload. READ ONLY: nothing but SELECTs.
+# Enumerates SQL Server logins and server-level roles from the Bridge broker and
+# writes the Resource Manager scan payload. READ ONLY: nothing but SELECTs.
 #
 # Broker-supplied:
 #   BROKER_INJECTED_SCAN_OUTPUT_PATH  (required) where to write the JSON
@@ -11,52 +11,53 @@
 # ------------------------------------------------------------------------------
 # RESOURCE ATTRIBUTES
 # ------------------------------------------------------------------------------
-# A scan runs against a resource, and the broker injects that resource's
-# attributes with a RESOURCE_ prefix:
-#
 #   Attribute        | Arrives as                | Meaning
 #   -----------------|---------------------------|----------------------------
-#   DBURL            | RESOURCE_DBURL            | RDS/Aurora endpoint hostname
+#   DBURL            | RESOURCE_DBURL            | SQL Server endpoint hostname
 #   ADMIN_USER       | RESOURCE_ADMIN_USER       | admin login (optional; falls back
 #                    |                           | to the secret's username field)
 #   AWS_SECRET_NAME  | RESOURCE_AWS_SECRET_NAME  | Secrets Manager id holding
 #                    |                           | {username, password} for admin
 #
-# Setting DBURL / SECRET_NAME directly overrides them, so this stays runnable by
-# hand for testing.
-#
 # Optional env vars:
-#   DB_PORT     - MySQL port (default: 3306)
+#   DB_PORT     - SQL Server port (default: 1433)
+#   DB_NAME     - database to connect to (default: master; the scan reads
+#                 server-level catalog views, which live there)
 #   AWS_REGION  - Secrets Manager region (default: us-west-2)
-#   DB_CA_CERT  - RDS CA bundle path; enables server-cert verification. Without it
-#                 the connection is still encrypted but the chain is not verified.
-#                 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+#   DB_CA_CERT  - CA bundle for certificate verification. Without it the
+#                 connection is encrypted but the chain is NOT verified (-C).
 #
 # ------------------------------------------------------------------------------
 # WHAT MAPS ONTO WHAT
 # ------------------------------------------------------------------------------
-#   data.identities   one per account, id = 'user@host' -- MySQL identity is the
-#                     PAIR, so 'app'@'10.0.0.1' and 'app'@'%' are different
-#                     accounts with different grants. Using the bare user name as
-#                     the id would merge them and hand out the wrong access.
-#   data.groups       one per ROLE (MySQL 8.0+), members from mysql.role_edges
-#   data.permissions  empty -- see the note below
+#   data.identities   one per SERVER LOGIN (sys.server_principals types S/U/G)
+#   data.groups       one per SERVER ROLE (type R), members from
+#                     sys.server_role_members
+#   data.permissions  empty -- see below
 #   data.permission_mapping  empty -- role membership lives in groups.members
 #
-# Privileges are deliberately NOT enumerated. A full grant dump is one row per
-# user per database per table per column; on a real schema that is tens of
-# thousands of rows, it changes on every DDL, and Resource Manager has nothing to
-# do with it. Roles are the useful unit of access here.
+# SERVER level, not database level, and that is a deliberate scope choice. A login
+# is server-wide; a database *user* is a per-database object mapped to a login, and
+# there is one set of them per database. Reporting database users would produce
+# duplicate-looking identities with no stable id, so the login is the identity and
+# server roles are the groups.
 #
-# Pre-8.0 servers have no roles: mysql.role_edges does not exist, groups comes
-# back empty, and that is reported in scan_details rather than failing.
+# Privileges are not enumerated: sys.server_permissions plus every database's
+# object-level grants is enormous, changes on every DDL, and server roles are the
+# useful unit of access.
+#
+# ------------------------------------------------------------------------------
+# NOTE ON THE CLIENT
+# ------------------------------------------------------------------------------
+# Uses go-sqlcmd (`sqlcmd`), which the image installs instead of Microsoft's
+# mssql-tools -- those are glibc + amd64 only and will not run on this musl/ARM64
+# image. Flags differ slightly from the Microsoft client: -C trusts the server
+# certificate, and the password comes from SQLCMDPASSWORD rather than -P so it
+# stays out of /proc/<pid>/cmdline.
 # ==============================================================================
 
 set -uo pipefail
 
-# ------------------------------------------------------------------------------
-# Output path first: without it there is nowhere to report any later failure.
-# ------------------------------------------------------------------------------
 if [ -z "${BROKER_INJECTED_SCAN_OUTPUT_PATH:-}" ]; then
   printf 'ERROR: BROKER_INJECTED_SCAN_OUTPUT_PATH is not set; cannot write scan output.\n' >&2
   exit 1
@@ -65,12 +66,11 @@ OUTPUT_PATH="$BROKER_INJECTED_SCAN_OUTPUT_PATH"
 mkdir -p "$(dirname "$OUTPUT_PATH")" \
   || { printf 'ERROR: cannot create output directory for %s\n' "$OUTPUT_PATH" >&2; exit 1; }
 
-LOG_TAG="mysql-scan"
+LOG_TAG="mssql-scan"
 TRACE=""
 
 # INFO is buffered and the error prints FIRST: Britive keeps only about the first
-# 250 characters of captured output, so a run that logs progress first has its
-# actual failure truncated away. SCAN_VERBOSE=true restores live logging.
+# 250 characters of captured output. SCAN_VERBOSE=true restores live logging.
 info() {
   if [ "${SCAN_VERBOSE:-false}" = "true" ]; then
     printf '%s [%s] INFO  %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$LOG_TAG" "$1" >&2
@@ -79,8 +79,6 @@ info() {
   fi
 }
 
-# Every exit path must leave valid JSON at OUTPUT_PATH: the broker parses that
-# file to learn what happened, and a missing one reports as an opaque failure.
 write_scan_error() {
   python3 -c '
 import json
@@ -120,7 +118,8 @@ trap cleanup EXIT INT TERM
 # ------------------------------------------------------------------------------
 DBURL="${DBURL:-${RESOURCE_DBURL:-}}"
 SECRET_NAME="${SECRET_NAME:-${RESOURCE_AWS_SECRET_NAME:-}}"
-DB_PORT="${DB_PORT:-3306}"
+DB_PORT="${DB_PORT:-1433}"
+DB_NAME="${DB_NAME:-master}"
 AWS_REGION="${AWS_REGION:-us-west-2}"
 DB_CA_CERT="${DB_CA_CERT:-}"
 DB_ADMIN_USER_ATTR="${DB_ADMIN_USER:-${RESOURCE_ADMIN_USER:-}}"
@@ -130,7 +129,7 @@ DB_ADMIN_USER_ATTR="${DB_ADMIN_USER:-${RESOURCE_ADMIN_USER:-}}"
 [ -n "$SECRET_NAME" ] \
   || die "no admin credential: set the resource's AWS_SECRET_NAME attribute (arrives as RESOURCE_AWS_SECRET_NAME)"
 
-for cmd in mysql aws jq python3; do
+for cmd in sqlcmd aws jq python3; do
   command -v "$cmd" >/dev/null 2>&1 || die "broker is missing required command: ${cmd}"
 done
 
@@ -139,11 +138,6 @@ info "scan target ${DBURL}:${DB_PORT}, output ${OUTPUT_PATH}"
 TMP_DIR="$(mktemp -d)" || die "mktemp -d failed (no writable TMPDIR?)"
 chmod 700 "$TMP_DIR"
 
-# ------------------------------------------------------------------------------
-# Admin credentials. Written to a 0600 defaults-file and passed with
-# --defaults-extra-file: the password is NEVER on the command line, where
-# /proc/<pid>/cmdline would expose it to everything in the container.
-# ------------------------------------------------------------------------------
 info "reading admin credentials from Secrets Manager id '${SECRET_NAME}' (${AWS_REGION})"
 SECRET_JSON="$(aws secretsmanager get-secret-value \
     --secret-id "$SECRET_NAME" --region "$AWS_REGION" \
@@ -161,86 +155,73 @@ unset SECRET_JSON
 [ -n "$DB_ADMIN_USER" ] \
   || die "no admin username: set the resource's ADMIN_USER attribute (arrives as RESOURCE_ADMIN_USER), or put a 'username' field in secret '${SECRET_NAME}'"
 
-MY_CNF="${TMP_DIR}/my.cnf"
-# No quotes around the values: the [client] section treats them literally.
-( umask 077; cat > "$MY_CNF" <<EOF
-[client]
-user = $DB_ADMIN_USER
-password = $DB_ADMIN_PASSWORD
-host = $DBURL
-port = $DB_PORT
-connect_timeout = 15
-EOF
-) || die "cannot write the MySQL defaults file"
+# SQLCMDPASSWORD rather than -P: an argument would sit in /proc/<pid>/cmdline for
+# the life of the call, readable by anything in the container.
+export SQLCMDPASSWORD="$DB_ADMIN_PASSWORD"
 unset DB_ADMIN_PASSWORD
 
-# TLS: newer MariaDB clients verify the server certificate by default and reject
-# the RDS CA ("self-signed certificate in certificate chain"). Option names differ
-# per client flavour, so branch on which one is installed.
-if mysql --version 2>/dev/null | grep -qi mariadb; then
-  if [ -n "$DB_CA_CERT" ]; then
-    printf 'ssl-ca = %s\nssl-verify-server-cert = 1\n' "$DB_CA_CERT" >> "$MY_CNF"
-  else
-    printf 'ssl-verify-server-cert = 0\n' >> "$MY_CNF"
-  fi
+TLS_ARGS=(-N)                       # -N: encrypt the connection
+if [ -n "$DB_CA_CERT" ]; then
+  export SSL_CERT_FILE="$DB_CA_CERT"
 else
-  if [ -n "$DB_CA_CERT" ]; then
-    printf 'ssl-ca = %s\nssl-mode = VERIFY_CA\n' "$DB_CA_CERT" >> "$MY_CNF"
-  else
-    printf 'ssl-mode = REQUIRED\n' >> "$MY_CNF"
-  fi
+  TLS_ARGS+=(-C)                    # -C: trust the server certificate unverified
 fi
 
-# mysql_query <sql> — tab-separated rows, no header, no column alignment.
-# --batch also escapes tabs/newlines inside values as \t and \n, so one row is
-# always one line and the parser cannot be fooled by a name containing whitespace.
-mysql_query() {
-  mysql --defaults-extra-file="$MY_CNF" --batch --skip-column-names -e "$1"
+# mssql_query <sql> — one record per line, fields separated by a US (0x1f) unit
+# separator. Not a tab or comma: a login name may legally contain either, and a
+# split on the wrong character silently corrupts identity ids.
+SEP=$'\x1f'
+mssql_query() {
+  sqlcmd -S "tcp:${DBURL},${DB_PORT}" -U "$DB_ADMIN_USER" -d "$DB_NAME" \
+    "${TLS_ARGS[@]}" -l 15 -h -1 -W -s "$SEP" -Q "SET NOCOUNT ON; $1"
 }
 
 info "connecting"
-SERVER_VERSION="$(mysql_query "SELECT VERSION();" 2>"${TMP_DIR}/connect.err")" \
+SERVER_VERSION="$(mssql_query "SELECT CONVERT(varchar(200), SERVERPROPERTY('ProductVersion'));" 2>"${TMP_DIR}/connect.err" | head -1)" \
   || die "cannot connect to ${DBURL}:${DB_PORT} as '${DB_ADMIN_USER}': $(tr '\n' ' ' < "${TMP_DIR}/connect.err" | cut -c1-200)"
+[ -n "$SERVER_VERSION" ] \
+  || die "connected to ${DBURL}:${DB_PORT} but got no version back: $(tr '\n' ' ' < "${TMP_DIR}/connect.err" | cut -c1-200)"
 info "server version ${SERVER_VERSION}"
 
 # ------------------------------------------------------------------------------
-# Accounts. account_locked and password_expired both make an account unusable, so
-# either one maps to is_active=false.
+# Logins. is_disabled is on sys.sql_logins only (SQL logins); Windows principals
+# have no such column, hence the LEFT JOIN and the ISNULL default of enabled.
 # ------------------------------------------------------------------------------
-USERS_TSV="${TMP_DIR}/users.tsv"
-mysql_query "
-  SELECT user, host, account_locked, password_expired
-    FROM mysql.user
-   ORDER BY user, host;" > "$USERS_TSV" 2>"${TMP_DIR}/users.err" \
-  || die "cannot read mysql.user (the admin account needs SELECT on it): $(tr '\n' ' ' < "${TMP_DIR}/users.err" | cut -c1-200)"
+LOGINS_TSV="${TMP_DIR}/logins.tsv"
+mssql_query "
+  SELECT p.name, p.type, p.type_desc, ISNULL(CONVERT(int, l.is_disabled), 0)
+    FROM sys.server_principals AS p
+    LEFT JOIN sys.sql_logins  AS l ON l.principal_id = p.principal_id
+   WHERE p.type IN ('S','U','G')
+     AND p.name NOT LIKE '##%'
+   ORDER BY p.name;" > "$LOGINS_TSV" 2>"${TMP_DIR}/logins.err" \
+  || die "cannot read sys.server_principals (the admin needs VIEW ANY DEFINITION or sysadmin): $(tr '\n' ' ' < "${TMP_DIR}/logins.err" | cut -c1-200)"
 
 # ------------------------------------------------------------------------------
-# Roles. mysql.role_edges is MySQL 8.0+; its absence is normal, not an error.
+# Server roles and their members.
 # ------------------------------------------------------------------------------
 ROLES_TSV="${TMP_DIR}/roles.tsv"
-ROLES_SUPPORTED=true
-if ! mysql_query "
-      SELECT CONCAT(from_user, '@', from_host) AS role,
-             CONCAT(to_user,   '@', to_host)   AS member
-        FROM mysql.role_edges
-       ORDER BY role, member;" > "$ROLES_TSV" 2>/dev/null; then
-  ROLES_SUPPORTED=false
-  : > "$ROLES_TSV"
-  info "mysql.role_edges unavailable (pre-8.0 server, or no SELECT on it) -- groups will be empty"
-fi
+mssql_query "
+  SELECT r.name, ISNULL(m.name, '')
+    FROM sys.server_principals AS r
+    LEFT JOIN sys.server_role_members AS rm ON rm.role_principal_id = r.principal_id
+    LEFT JOIN sys.server_principals   AS m  ON m.principal_id = rm.member_principal_id
+   WHERE r.type = 'R'
+     AND r.name NOT LIKE '##%'
+   ORDER BY r.name;" > "$ROLES_TSV" 2>"${TMP_DIR}/roles.err" \
+  || die "cannot read sys.server_role_members: $(tr '\n' ' ' < "${TMP_DIR}/roles.err" | cut -c1-200)"
 
-info "users $(wc -l < "$USERS_TSV" | tr -d ' '), role edges $(wc -l < "$ROLES_TSV" | tr -d ' ')"
+info "login rows $(wc -l < "$LOGINS_TSV" | tr -d ' '), role rows $(wc -l < "$ROLES_TSV" | tr -d ' ')"
 
 # ------------------------------------------------------------------------------
-# Assemble the payload. python stdlib only, no pip dependency on the broker.
+# Assemble the payload.
 # ------------------------------------------------------------------------------
 SCAN_JSON="${TMP_DIR}/scan.json"
 
 DBURL="$DBURL" \
 NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-USERS_TSV="$USERS_TSV" \
+LOGINS_TSV="$LOGINS_TSV" \
 ROLES_TSV="$ROLES_TSV" \
-ROLES_SUPPORTED="$ROLES_SUPPORTED" \
 SERVER_VERSION="$SERVER_VERSION" \
 OUT_JSON="$SCAN_JSON" \
 python3 <<'PYEOF'
@@ -248,33 +229,31 @@ import json
 import os
 import re
 
-# --batch escapes these inside values; undo them so names round-trip exactly.
-UNESCAPE = (("\\t", "\t"), ("\\n", "\n"), ("\\\\", "\\"))
+SEP = "\x1f"
+
+TYPE_DESC = {
+    "S": "SQL login",
+    "U": "Windows login",
+    "G": "Windows group",
+}
 
 
-def unescape(value):
-    for old, new in UNESCAPE:
-        value = value.replace(old, new)
-    return value
-
-
-def read_tsv(path, width):
+def read_rows(path, width):
     rows = []
     with open(path, encoding="utf-8", errors="replace") as handle:
         for line in handle:
-            line = line.rstrip("\n")
-            if not line:
+            line = line.rstrip("\r\n")
+            if not line.strip():
                 continue
-            fields = line.split("\t")
+            fields = [f.strip() for f in line.split(SEP)]
             if len(fields) < width:
                 continue
-            rows.append([unescape(f) for f in fields[:width]])
+            rows.append(fields[:width])
     return rows
 
 
 dburl = os.environ["DBURL"]
 now = os.environ["NOW"]
-roles_supported = os.environ["ROLES_SUPPORTED"] == "true"
 
 # The platform's account table has NOT NULL email, first_name and last_name
 # columns -- an identity without them fails the import with
@@ -290,75 +269,75 @@ def synth_email(identity_id, domain):
     return f"{local or 'account'}@{domain}"
 
 
-# A MySQL account is the (user, host) pair. Roles live in the same table, so the
-# role_edges "from" side tells us which rows are roles rather than logins.
-role_ids = set()
-for role, _member in read_tsv(os.environ["ROLES_TSV"], 2):
-    role_ids.add(role)
-
 identities = []
-locked = 0
-for user, host, account_locked, password_expired in read_tsv(os.environ["USERS_TSV"], 4):
-    account_id = f"{user}@{host}"
-    if account_id in role_ids:
-        # It is a role; it is reported as a group below, not as an identity.
+disabled = 0
+seen = set()
+for name, ptype, type_desc, is_disabled in read_rows(os.environ["LOGINS_TSV"], 4):
+    if not name or name in seen:
         continue
-    is_active = account_locked != "Y" and password_expired != "Y"
-    if not is_active:
-        locked += 1
+    seen.add(name)
+    # The LEFT JOIN yields 0 for Windows principals, which have no is_disabled.
+    active = is_disabled != "1"
+    if not active:
+        disabled += 1
     identities.append({
-        "id": account_id,
-        "name": account_id,
+        "id": name,
+        "name": name,
         "type": "User",
-        "description": "MySQL account",
+        "description": TYPE_DESC.get(ptype, type_desc or "SQL Server login"),
         "created_on": now,
-        "is_active": is_active,
+        "is_active": active,
         "attributes": {
-            "email": synth_email(account_id, dburl),
-            "first_name": user or "NA",
+            "email": synth_email(name, dburl),
+            "first_name": name.split("\\")[-1] or "NA",
             "last_name": "NA",
-            "username": user,
-            "host": host,
-            "account_locked": account_locked,
-            "password_expired": password_expired,
+            "login": name,
+            "principal_type": ptype,
+            "principal_type_desc": type_desc,
         },
     })
 
 identity_ids = {identity["id"] for identity in identities}
 
-# One group per role, members inverted from the edge list. A member that is itself
-# a role is dropped: Resource Manager resolves members against identity ids, and a
-# nested role is not an identity, so keeping it would dangle.
+# The role query LEFT JOINs members, so a role with no members still appears with
+# an empty member field. Members outside identity_ids are dropped: Resource
+# Manager resolves members against identity ids, and a nested role is not one.
 members_by_role = {}
 nested = 0
-for role, member in read_tsv(os.environ["ROLES_TSV"], 2):
-    if member in identity_ids:
-        members_by_role.setdefault(role, set()).add(member)
-    else:
-        nested += 1
-        members_by_role.setdefault(role, set())
+for role, member in read_rows(os.environ["ROLES_TSV"], 2):
+    if not role:
+        continue
+    bucket = members_by_role.setdefault(role, set())
+    if member:
+        if member in identity_ids:
+            bucket.add(member)
+        else:
+            nested += 1
 
 groups = []
-for role in sorted(role_ids):
+empty = 0
+for role in sorted(members_by_role):
+    members = sorted(members_by_role[role])
+    if not members:
+        empty += 1
     groups.append({
         "id": role,
         "name": role,
         "type": "User group",
-        "description": "MySQL role",
+        "description": "SQL Server server role",
         "created_on": now,
         "is_active": True,
-        "members": sorted(members_by_role.get(role, set())),
-        "attributes": {"role": role},
+        "members": members,
+        "attributes": {"server_role": role},
     })
 
 details = (
-    f"MySQL scan completed on {os.environ['SERVER_VERSION']}. "
-    f"Accounts: {len(identities)} ({locked} locked or expired), Roles: {len(groups)}"
+    f"MSSQL scan completed on {os.environ['SERVER_VERSION']}. "
+    f"Logins: {len(identities)} ({disabled} disabled), "
+    f"Server roles: {len(groups)} ({empty} empty)"
 )
-if not roles_supported:
-    details += ". Roles unavailable on this server, so no groups were reported"
 if nested:
-    details += f". Nested role grants skipped: {nested}"
+    details += f". Nested role memberships skipped: {nested}"
 
 payload = {
     "data": {
@@ -369,7 +348,7 @@ payload = {
     },
     "metadata": {
         "resource_id": dburl,
-        "resource_type": "MySQL",
+        "resource_type": "MSSQL",
         "scan_time": now,
         "scan_details": details,
         "scan_errors": "",
@@ -388,10 +367,6 @@ PYEOF
 rc=$?
 [ "$rc" -eq 0 ] || die "failed to assemble the scan JSON (python exit ${rc})"
 
-# ------------------------------------------------------------------------------
-# Validate before publishing: writing straight to OUTPUT_PATH would let a
-# half-formed payload reach the broker.
-# ------------------------------------------------------------------------------
 [ -s "$SCAN_JSON" ] || die "scan produced no output"
 
 if ! python3 - "$SCAN_JSON" <<'PYEOF' >&2
@@ -408,8 +383,6 @@ for key in ("identities", "groups", "permissions", "permission_mapping"):
 if not payload["metadata"]["resource_type"]:
     raise SystemExit("metadata.resource_type is empty")
 
-# Every member must resolve to an identity id, or the platform silently drops the
-# membership at import.
 ids = {identity["id"] for identity in data["identities"]}
 dangling = {m for group in data["groups"] for m in group["members"]} - ids
 if dangling:
