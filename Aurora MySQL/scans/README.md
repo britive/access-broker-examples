@@ -1,124 +1,59 @@
-# MySQL / Aurora MySQL Scan
+## MySQL / Aurora DB Scan
 
-This directory contains a bash script that scans a MySQL or Aurora MySQL endpoint for local accounts, roles, role memberships, and privilege grants, and outputs the data as JSON for downstream processing by the Britive Resource Manager — the same schema used by the [Active Directory scan](../../Active%20Directory/scans/).
+This directory contains a POSIX shell script that scans a **MySQL / Aurora RDS instance** for its database accounts (users) and roles (and the role→user assignments), and outputs the data as JSON for the Britive Resource Manager. The output schema matches the [Linux](../../Linux/scans/README.md) and [Windows](../../Windows/scans/README.md) VM scans so local database identities and roles are stored per instance in the same shape.
 
 ### Script: `mysql-scan.sh`
 
-Connects to the database with admin credentials from AWS Secrets Manager, enumerates `mysql.user` and `mysql.role_edges`, captures each account's `SHOW GRANTS` output, and writes the results to a structured JSON file at the path specified by the Britive broker.
+Runs on the Britive broker. It reads vaulted admin credentials from AWS Secrets Manager (the same pattern as the [temp-user](../permissions/temp-user/README.md) checkout scripts), connects to the RDS/Aurora endpoint with the `mysql` client, and enumerates:
+
+- **Identities** — login accounts from `mysql.user`.
+- **Groups** — MySQL **roles**, with members (grantees) from `mysql.role_edges`.
+- **Permissions** — left empty (defined in the resource type, matching the other scans).
+
+JSON is assembled with `jq` for safe escaping.
 
 #### Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `BROKER_INJECTED_SCAN_OUTPUT_PATH` | Yes | — | Full file path for the scan JSON output. Injected by the Britive broker at runtime. |
-| `dburl` | Yes | — | RDS / Aurora endpoint hostname |
-| `secret` | Yes | — | AWS Secrets Manager secret ID holding admin `{username, password}` |
-| `AWS_REGION` | No | `us-west-2` | Secrets Manager region |
-| `DB_PORT` | No | `3306` | MySQL port |
-| `DB_CA_CERT` | No | — | Path to the [RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem) on the broker; enables server cert verification. Without it the connection is encrypted but the chain is not verified (MariaDB 11.4+ clients verify by default and reject the RDS CA) |
-| `SCAN_EXCLUDE_USERS` | No | `mysql.infoschema,mysql.session,mysql.sys,rdsadmin,rdsrepladmin` | Comma-separated `User` values to skip (system/service accounts) |
-| `SCAN_INCLUDE_GRANTS` | No | `1` | `1` captures `SHOW GRANTS` per account into `attributes.grants` (one extra query per account); `0` skips |
+| `BROKER_INJECTED_SCAN_OUTPUT_PATH` | Yes | — | Full file path where the scan JSON is written. Injected by the broker at runtime. |
+| `RESOURCE_URL` | Yes | — | RDS / Aurora endpoint hostname. Broker-injected resource param. |
+| `RESOURCE_AWSSECRETID` | Yes | — | Secrets Manager secret ID holding admin `{username, password}`. Broker-injected. (The mixed-case form `RESOURCE_AWSsecretID` is also accepted.) |
+| `RESOURCE_AWS_SECRET_REGION` | No | `us-west-2` | AWS region where the secret lives. Broker-injected. |
+| `DB_PORT` | No | `3306` | MySQL port on the endpoint. |
+| `DB_CA_CERT` | No | — | Path to the [RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem) on the broker; enables server cert verification. Without it the connection is encrypted but the chain is not verified. |
 
 #### How It Works
 
-1. Validates `BROKER_INJECTED_SCAN_OUTPUT_PATH` is set (fails immediately if not) and creates the output directory if missing.
-2. Fetches admin credentials from Secrets Manager and verifies connectivity.
-3. Queries `mysql.user` for all accounts (`User`, `Host`, `account_locked`, `password_expired`).
-4. Queries `mysql.role_edges` (MySQL 8+ / Aurora MySQL 3+) for role grants. On engines without it (MySQL 5.7), the groups array is simply empty.
-5. Emits accounts as **identities** and roles as **groups**, with each role's grantees as members.
-6. Optionally captures `SHOW GRANTS` per account/role into `attributes.grants`.
-7. Writes the JSON output to the broker-specified path.
-8. On any failure, writes a minimal JSON with the error details so the broker can report the failure back to the platform.
+1. Validates `BROKER_INJECTED_SCAN_OUTPUT_PATH`, `RESOURCE_URL`, `RESOURCE_AWSSECRETID`, and the `mysql`/`aws`/`jq` commands.
+2. Fetches admin `{username, password}` from Secrets Manager and writes a `600` `[client]` config (credentials never appear on the command line).
+3. TLS to the endpoint: verifies against `DB_CA_CERT` when provided, otherwise stays encrypted but skips chain verification (option names differ for MariaDB vs Oracle MySQL clients).
+4. **Users** — `SELECT User, Host, account_locked, password_expired, plugin FROM mysql.user`. `is_active` is `false` when `account_locked = 'Y'`.
+5. **Roles** — `SELECT FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges`. An account that is granted to others (appears as `FROM`) is treated as a role; members are the `TO` grantees. `role_edges` only exists on MySQL 8.0+; on 5.7 the query degrades to "no roles".
+6. Writes the JSON to the broker-specified path.
+7. On any failure, writes a minimal valid JSON with the error message so the broker can report it back.
 
 #### Identity Resolution
 
-- **Identity `id`** uses the MySQL account identifier `user@host` (e.g., `alice@%`, `deploy@10.0.0.5`) — unique per account and short enough for native_id column limits.
-- **Group `id`** uses the role's `user@host` identifier.
-- **Group `members`** arrays contain grantee `user@host` values, matching the identity `id` field so that `attribute_resolution.group_membership = "id"` resolves correctly.
-- An account is classified as a **role** (group) when it appears on the `FROM` side of `mysql.role_edges`; role accounts are excluded from the identities array, and role-to-role grants are excluded from member lists.
-- `is_active` is `false` when `account_locked = 'Y'`.
+- **User `id`** and **role `id`** use `user@host` (e.g. `alice@%`) — the real MySQL account identity, since the same username can exist for multiple hosts.
+- **Role `members`** arrays contain `user@host` values matching identity `id`s, so `attribute_resolution.group_membership = "id"` resolves correctly.
+- Host, `account_locked`, `password_expired`, and `auth_plugin` are kept in `attributes` for reference.
 
 #### Output Schema
 
-- **`data.identities`** — all non-role MySQL accounts with attributes: `username`, `host`, `account_locked`, `password_expired`, `grants`.
-- **`data.groups`** — MySQL roles with their grantee member lists and attributes: `rolename`, `host`, `account_locked`, `grants`.
-- **`data.permissions`** — empty array (permissions are defined in the resource type, not from this scan; privilege detail is captured in `attributes.grants`).
-- **`data.permission_mapping`** — empty array (role assignments are captured in `groups.members`).
-- **`metadata`** — includes `resource_id` (the endpoint hostname), `resource_type` (`MySQL`), `scan_time`, `scan_details`, `scan_errors`, and `attribute_resolution`.
-
-Example output:
-
-```json
-{
-  "data": {
-    "identities": [
-      {
-        "id": "alice@%",
-        "name": "alice@%",
-        "type": "User",
-        "description": "MySQL local account",
-        "created_on": "2026-07-15T00:00:00Z",
-        "is_active": true,
-        "attributes": {
-          "username": "alice",
-          "host": "%",
-          "account_locked": "N",
-          "password_expired": "N",
-          "grants": "GRANT SELECT ON `analytics`.* TO `alice`@`%`;GRANT USAGE ON *.* TO `alice`@`%`"
-        }
-      }
-    ],
-    "groups": [
-      {
-        "id": "app_ro@%",
-        "name": "app_ro@%",
-        "type": "User group",
-        "description": "MySQL role",
-        "created_on": "2026-07-15T00:00:00Z",
-        "is_active": true,
-        "members": ["alice@%"],
-        "attributes": {
-          "rolename": "app_ro",
-          "host": "%",
-          "account_locked": "Y",
-          "grants": "GRANT SELECT ON `analytics`.* TO `app_ro`@`%`"
-        }
-      }
-    ],
-    "permissions": [],
-    "permission_mapping": []
-  },
-  "metadata": {
-    "resource_id": "mydb.cluster-abc.us-west-2.rds.amazonaws.com",
-    "resource_type": "MySQL",
-    "scan_time": "2026-07-15T00:00:00Z",
-    "scan_details": "MySQL scan completed. Accounts: 1, Roles: 1",
-    "scan_errors": "",
-    "attribute_resolution": {
-      "group_membership": "id",
-      "permission_mapping": "id"
-    }
-  }
-}
-```
-
-#### Fail-Fast Behavior
-
-- Missing `BROKER_INJECTED_SCAN_OUTPUT_PATH` causes an immediate failure before any queries run.
-- Missing tools (`mysql`, `aws`, `jq`), unreadable secret, or a failed connectivity check (`SELECT 1`) each abort the scan and write a valid error JSON so the broker always receives a parseable response.
-- Credentials live only in a `chmod 600` temp defaults file, removed on exit.
-
-#### Database Permissions Required
-
-The admin account (from the secret) needs:
-
-```sql
-GRANT SELECT ON mysql.* TO 'scan_user'@'%';   -- mysql.user, mysql.role_edges
-```
-
-`SHOW GRANTS FOR` other accounts additionally requires `SELECT` on `mysql.*` (covered above).
+- **`data.identities`** — database users with attributes: `username`, `email` (`<user>@<endpoint>` — the platform requires a non-null email), `host`, `account_locked`, `password_expired`, `auth_plugin`.
+- **`data.groups`** — MySQL roles with member lists and attributes: `rolename`, `host`.
+- **`data.permissions`** — empty (permissions are defined in the resource type).
+- **`data.permission_mapping`** — empty (role-to-user lives in `groups.members`).
+- **`metadata`** — `resource_id` (endpoint), `resource_type` = `MySQLDB`, `scan_time`, `scan_details`, `scan_errors`, `attribute_resolution`.
 
 #### Prerequisites
 
-- `bash`, `mysql` client, `aws` CLI (with Secrets Manager read access), `jq`
-- Network access from the broker to the endpoint on `DB_PORT`
+**Broker host:** `sh`, `mysql` client, `aws` CLI (with `secretsmanager:GetSecretValue` on the secret), `jq`, `mktemp`; network reachability to the RDS/Aurora endpoint on `DB_PORT`.
+
+**Database:** the admin account in the secret must have `SELECT` on `mysql.user` and `mysql.role_edges`. The RDS master user has this by default.
+
+#### Limitations
+
+- A role with **no grantees** is indistinguishable from a user (MySQL has no authoritative "is role" column) and is reported as a user.
+- Direct object privileges (`GRANT`s) are not enumerated — the scan captures identities, roles, and role membership only.
