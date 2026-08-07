@@ -26,13 +26,10 @@
 #                        from the local part)
 #   TRX                - Britive transaction ID
 #   TARGET_HOST        - SSH target host
-#   BRIDGE_URL         - Bridge web hostname (browser sessions)
+#   BRIDGE_URL         - Bridge hostname; one NLB serves browser and native sessions
 #   EXPIRATION         - Checkout duration in seconds
 #
 # Optional env vars (with defaults):
-#   NATIVE_HOST        - hostname native ssh clients connect to, when it
-#                        differs from the web host (e.g. web on an ALB,
-#                        native listeners on an NLB). Default: BRIDGE_URL host.
 #   TARGET_PORT        - SSH port on the target (default: 22)
 #   NATIVE_PORT        - Bridge native SSH listener port (default: 2222)
 #   BRITIVE_SUDO       - 1 to grant passwordless sudo to the temp user (default: 0)
@@ -218,7 +215,7 @@ jq -n \
     private_key: $private_key,
     record_session: true,
     expires_at: $expires_at} + $auth' > "$PAYLOAD_FILE"
-# NOTE: "username" is the checkout OWNER — the Britive/SSO identity the Bridge
+# NOTE: "username" is the checkout OWNER â the Britive/SSO identity the Bridge
 # matches against for BOTH browser sessions and the native ssh login. It and the
 # native login username (bridge_username) must be the same value (USER_EMAIL).
 
@@ -230,29 +227,26 @@ fi
 echo "[checkout] Bridge session registered (auth: ${AUTH_METHOD})" >&2
 
 # --- Output connection details ---
-# BRIDGE_URL is the web host (browser sessions); NATIVE_HOST is what native
-# ssh clients connect to — defaults to the web host for single-endpoint
-# deployments, override when web (ALB) and native (NLB) endpoints differ.
+# One NLB fronts both the web tier and every native listener, so browser
+# sessions and native ssh clients use the SAME host -- BRIDGE_URL.
 BRIDGE_HOST="${BRIDGE_URL#https://}"
 BRIDGE_HOST="${BRIDGE_HOST#http://}"
 BRIDGE_HOST="${BRIDGE_HOST%%[:/]*}"
-NATIVE_HOST="${NATIVE_HOST:-${BRIDGE_HOST}}"
 NATIVE_USER="${USER_EMAIL}%${TARGET_HOST}"
 # Use -l for the username: it contains '@' (email) and '%' (target separator),
 # so embedding it as user@host would be ambiguous. -l passes it verbatim.
-COMMAND="ssh -p ${NATIVE_PORT} -l '${NATIVE_USER}' ${NATIVE_HOST}"
+COMMAND="ssh -p ${NATIVE_PORT} -l '${NATIVE_USER}' ${BRIDGE_HOST}"
 BROWSER_SESSION="https://${BRIDGE_HOST}/ssh/#transaction_id=${TRANSACTION_ID}"
 
 jq -n \
   --arg BRIDGE_URL "$BRIDGE_HOST" \
-  --arg native_host "$NATIVE_HOST" \
   --arg command "$COMMAND" \
   --arg auth_method "$AUTH_METHOD" \
   --arg bridge_username "$NATIVE_USER" \
   --arg bridge_port "$NATIVE_PORT" \
   --arg target_username "$TARGET_USERNAME" \
   --arg browser_session "$BROWSER_SESSION" \
-  '{BRIDGE_URL: $BRIDGE_URL, native_host: $native_host, command: $command,
+  '{BRIDGE_URL: $BRIDGE_URL, command: $command,
     auth_method: $auth_method, bridge_username: $bridge_username,
     bridge_port: $bridge_port, target_username: $target_username,
     browser_session: $browser_session}'

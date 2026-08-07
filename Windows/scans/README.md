@@ -8,7 +8,7 @@ This directory scans a remote Windows VM for its **local** users, groups, and gr
 |---|---|---|---|
 | `windows_scan_script.ps1` | Windows broker | PowerShell remoting (`Invoke-Command`) | Optional explicit credential; falls back to broker identity |
 | `windows_scan_provision.ps1` | Windows broker | PowerShell remoting (`Invoke-Command`) | Provision credential **required** (`RESOURCE_PROVISION_*`) |
-| `windows-scan.sh` | **Linux broker** | WinRM (pywinrm) or SSH (`powershell.exe -EncodedCommand`) | Shell version; same transport as the [temp-rdp-bridge](../permissions/temp-rdp-bridge/) scripts |
+| `windows-scan.sh` | **Linux broker** | WinRM (pywinrm) or SSH (`powershell.exe -EncodedCommand`) | Shell version; same transport as the [temp-user-bridge](../permissions/temp-user-bridge/) scripts |
 
 All three run a PowerShell enumeration on the VM (`Get-LocalUser`, `Get-LocalGroup`, `Get-LocalGroupMember`) and produce the same `data`/`metadata` schema with `resource_type = WindowsVM`.
 
@@ -68,7 +68,7 @@ Runs on a Windows broker; connects to the target over WinRM via `Invoke-Command`
 
 ### Shell (Linux broker): `windows-scan.sh`
 
-For brokers that run on Linux. Reaches the Windows target exactly like the [temp-rdp-bridge](../permissions/temp-rdp-bridge/) checkout scripts — WinRM via `python3` + `pywinrm`, or SSH via `powershell.exe -EncodedCommand`. A PowerShell block runs **on the target**, enumerates local users/groups, and emits the full Britive JSON on stdout; the broker captures it, normalizes line endings / BOM, validates it, and writes it to the output path.
+For brokers that run on Linux. Reaches the Windows target exactly like the [temp-user-bridge](../permissions/temp-user-bridge/) checkout scripts — WinRM via `python3` + `pywinrm`, or SSH via `powershell.exe -EncodedCommand`. A PowerShell block runs **on the target**, enumerates local users/groups, and emits the full Britive JSON on stdout; the broker captures it, normalizes line endings / BOM, validates it, and writes it to the output path.
 
 #### Environment Variables
 

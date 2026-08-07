@@ -112,7 +112,7 @@ if run_root test -f "$AUTH_KEYS"; then
     AFTER=$(run_root cat "$AUTH_KEYS" | wc -l)
     echo "authorized_keys: removed $((BEFORE - AFTER)) key(s) matching '$MARKER' for $TARGET_USER"
 else
-    echo "No authorized_keys file found for $TARGET_USER — skipping"
+    echo "No authorized_keys file found for $TARGET_USER â skipping"
 fi
 
 # Always remove the sudoers entry for this transaction

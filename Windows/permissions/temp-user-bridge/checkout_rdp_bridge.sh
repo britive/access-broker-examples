@@ -23,14 +23,11 @@
 #                        from the local part)
 #   TRX                - Britive transaction ID
 #   TARGET_HOST        - Windows RDP target host
-#   BRIDGE_URL         - Bridge web hostname (browser sessions)
+#   BRIDGE_URL         - Bridge hostname; one NLB serves browser and native sessions
 #   EXPIRATION         - Checkout duration in seconds
 #   BRIDGE_AUTH_PASSWORD - bridge password (see above)
 #
 # Optional env vars (with defaults):
-#   NATIVE_HOST         - hostname native RDP clients connect to, when it
-#                         differs from the web host (e.g. web on an ALB, native
-#                         listeners on an NLB). Default: BRIDGE_URL host.
 #   TARGET_PORT         - RDP port on the target (default: 3389)
 #   TARGET_DOMAIN       - Windows/AD domain for the RDP login (default: none)
 #   NATIVE_PORT         - Bridge native RDP listener port (default: 3389)
@@ -98,7 +95,7 @@ command -v jq >/dev/null 2>&1 || fail "jq not found"
 case "$PROVISION_TRANSPORT" in
     winrm)
         [ -n "$PROVISION_PASSWORD" ] || fail "PROVISION_PASSWORD required for winrm transport"
-        python3 -c "import winrm" 2>/dev/null || fail "pywinrm not installed — run: pip install pywinrm"
+        python3 -c "import winrm" 2>/dev/null || fail "pywinrm not installed â run: pip install pywinrm"
         ;;
     ssh)
         command -v ssh >/dev/null 2>&1 || fail "ssh not found"
@@ -307,30 +304,27 @@ echo "[checkout] Bridge session registered (auth: ${AUTH_METHOD})" >&2
 # --- Output connection details ---
 # Standard Bridge checkout output schema (shared across ssh/rdp/db checkouts
 # so a single response template works for all):
-#   BRIDGE_URL, native_host, command, auth_method, bridge_username,
+#   BRIDGE_URL, command, auth_method, bridge_username,
 #   bridge_port, target_username, browser_session
-# BRIDGE_URL is the web host (browser sessions); NATIVE_HOST is what native
-# RDP clients connect to — defaults to the web host for single-endpoint
-# deployments, override when web (ALB) and native (NLB) endpoints differ.
+# One NLB fronts both the web tier and every native listener, so browser
+# sessions and native RDP clients use the SAME host -- BRIDGE_URL.
 # The native login is <email>%<target-host> (same identity as the owner).
 BRIDGE_HOST="${BRIDGE_URL#https://}"
 BRIDGE_HOST="${BRIDGE_HOST#http://}"
 BRIDGE_HOST="${BRIDGE_HOST%%[:/]*}"
-NATIVE_HOST="${NATIVE_HOST:-${BRIDGE_HOST}}"
 NATIVE_USER="${USER_EMAIL}%${TARGET_HOST}"
-COMMAND="mstsc /v:${NATIVE_HOST}:${NATIVE_PORT}"
+COMMAND="mstsc /v:${BRIDGE_HOST}:${NATIVE_PORT}"
 BROWSER_SESSION="https://${BRIDGE_HOST}/rdp/#transaction_id=${TRANSACTION_ID}"
 
 jq -n \
   --arg BRIDGE_URL "$BRIDGE_HOST" \
-  --arg native_host "$NATIVE_HOST" \
   --arg command "$COMMAND" \
   --arg auth_method "$AUTH_METHOD" \
   --arg bridge_username "$NATIVE_USER" \
   --arg bridge_port "$NATIVE_PORT" \
   --arg target_username "$USERNAME" \
   --arg browser_session "$BROWSER_SESSION" \
-  '{BRIDGE_URL: $BRIDGE_URL, native_host: $native_host, command: $command,
+  '{BRIDGE_URL: $BRIDGE_URL, command: $command,
     auth_method: $auth_method, bridge_username: $bridge_username,
     bridge_port: $bridge_port, target_username: $target_username,
     browser_session: $browser_session}'

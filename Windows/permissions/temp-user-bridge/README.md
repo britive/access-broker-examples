@@ -32,9 +32,10 @@ then the temp user is removed from its groups and deleted.
 
 The checkout returns everything needed:
 
-- **Native RDP client** — `command` (`mstsc /v:<native-host>:3389` — the port
-  the ECS deployment's NLB exposes for RDP; `native_host` defaults to the web
-  host, set `NATIVE_HOST` when they differ), username `<email>%<target-host>`
+- **Native RDP client** — `command` (`mstsc /v:<bridge-host>:3389` — the port
+  the ECS deployment's NLB exposes for RDP; one NLB fronts both the web tier
+  and every native listener, so browser and native clients use the same host),
+  username `<email>%<target-host>`
   where `<email>` is the user's Britive identity (`BRITIVE_USER_EMAIL`) — must
   equal the checkout owner / SSO identity, not the profile "Bridge Username"
   field. Password = the Bridge Password from the profile (`BRIDGE_AUTH_PASSWORD`).
@@ -56,7 +57,7 @@ connection.
 | `BRITIVE_USER_EMAIL` | Requesting user's email — local part becomes the Windows username (SAM-safe, max 20 chars) |
 | `TRX` | Britive transaction ID for this checkout |
 | `TARGET_HOST` | Hostname or IP of the Windows RDP target |
-| `BRIDGE_URL` | Bridge web hostname (browser sessions), e.g. `bridge.example.com` — **checkout only** |
+| `BRIDGE_URL` | Bridge hostname — one NLB serves both browser and native sessions, e.g. `bridge.example.com` — **checkout only** |
 | `EXPIRATION` | Session duration in seconds — **checkout only** |
 | `BRIDGE_AUTH_PASSWORD` | Bridge password from the profile; broker-injected. Entered at the RDP client credential prompt. The native login username is the user's email (`BRITIVE_USER_EMAIL`), not a separate bridge username |
 
@@ -64,7 +65,6 @@ connection.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NATIVE_HOST` | `BRIDGE_URL` host | Hostname native RDP clients connect to, when it differs from the web host (web on ALB, native listeners on NLB) |
 | `TARGET_PORT` | `3389` | RDP port on the target |
 | `TARGET_DOMAIN` | — | Windows/AD domain for the RDP login |
 | `NATIVE_PORT` | `3389` | Port of the Bridge's native RDP listener |
@@ -106,7 +106,6 @@ connection.
    ```json
    {
      "BRIDGE_URL": "bridge.example.com",
-     "native_host": "bridge.example.com",
      "command": "mstsc /v:bridge.example.com:3389",
      "auth_method": "password",
      "bridge_username": "alice@corp%win-jump.corp.local",

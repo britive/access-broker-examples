@@ -161,12 +161,6 @@ Are set by Britive at time of the profile checkout
 
 ---
 
-### 📁 [`temp-rdp-bridge/`](./temp-rdp-bridge/)
-
-**Purpose**: Earlier (Bridge v1) variant of the Bridge-proxied temp RDP user pattern using browser-only access URLs. Prefer `temp-user-bridge/` for Bridge v2 deployments.
-
----
-
 ## Common Patterns and Best Practices
 
 ### Environment Variable Usage
