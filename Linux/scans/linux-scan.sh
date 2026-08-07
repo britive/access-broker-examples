@@ -16,11 +16,18 @@ set -eu
 # Required env var:
 #   BROKER_INJECTED_SCAN_OUTPUT_PATH  – full path for JSON output
 #
-# Connection env vars (mirror the temp-ssh-key-remote scripts):
-#   BRITIVE_REMOTE_HOST (or HOST)  – target VM hostname/IP   (required)
-#   REMOTE_USER                    – ssh login user          (default: britivebroker)
-#   REMOTE_KEY                     – broker private key path  (default: /home/britivebroker/.ssh/MYKEY.pem)
-#   SCAN_MIN_UID                   – lowest UID to include    (default: 0 = all)
+# Broker-injected resource params (plaintext), same as the
+# temp-ssh-key-remote checkout/checkin scripts:
+#   RESOURCE_HOST          – target server hostname/IP        (required)
+#   RESOURCE_USER          – remote provisioning ssh user     (default: britivebroker)
+#   RESOURCE_KEY_LOCATION  – path to the provisioning user's private key
+#                            (default: /home/britivebroker/.ssh/MYKEY.pem)
+#
+# Optional:
+#   SCAN_MIN_UID           – lowest UID to include            (default: 0 = all)
+#
+# (Legacy names BRITIVE_REMOTE_HOST/HOST, REMOTE_USER, REMOTE_KEY are still
+#  honored as fallbacks.)
 #
 # Identity IDs use the local username so that
 # attribute_resolution.group_membership = "id" resolves correctly.
@@ -33,9 +40,9 @@ if [ -z "${BROKER_INJECTED_SCAN_OUTPUT_PATH:-}" ]; then
 fi
 OUTPUT_PATH="$BROKER_INJECTED_SCAN_OUTPUT_PATH"
 
-REMOTE_HOST="${BRITIVE_REMOTE_HOST:-${HOST:-}}"
-REMOTE_USER="${REMOTE_USER:-britivebroker}"
-REMOTE_KEY="${REMOTE_KEY:-/home/britivebroker/.ssh/MYKEY.pem}"
+REMOTE_HOST="${RESOURCE_HOST:-${BRITIVE_REMOTE_HOST:-${HOST:-}}}"
+REMOTE_USER="${RESOURCE_USER:-${REMOTE_USER:-britivebroker}}"
+REMOTE_KEY="${RESOURCE_KEY_LOCATION:-${REMOTE_KEY:-/home/britivebroker/.ssh/MYKEY.pem}}"
 SCAN_MIN_UID="${SCAN_MIN_UID:-0}"
 
 OUT_DIR="$(dirname "$OUTPUT_PATH")"
@@ -57,8 +64,8 @@ EOF
 }
 
 # ---- fail-fast connection checks --------------------------
-[ -z "$REMOTE_HOST" ]  && { write_error "REMOTE_HOST empty — set BRITIVE_REMOTE_HOST"; echo "ERROR: REMOTE_HOST empty" >&2; exit 1; }
-[ -f "$REMOTE_KEY" ]   || { write_error "SSH key not found at $REMOTE_KEY"; echo "ERROR: SSH key not found at $REMOTE_KEY" >&2; exit 1; }
+[ -z "$REMOTE_HOST" ]  && { write_error "RESOURCE_HOST empty — set RESOURCE_HOST"; echo "ERROR: RESOURCE_HOST empty" >&2; exit 1; }
+[ -f "$REMOTE_KEY" ]   || { write_error "SSH key not found at $REMOTE_KEY (RESOURCE_KEY_LOCATION)"; echo "ERROR: SSH key not found at $REMOTE_KEY" >&2; exit 1; }
 
 echo "Running Linux VM IAM-style broker scan against $REMOTE_HOST..."
 echo "Output path: $OUTPUT_PATH"
@@ -87,7 +94,9 @@ esc() {
 }
 
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-HOSTID="$(hostname -f 2>/dev/null || hostname)"
+# hostname resolution: prefer FQDN, fall back to short name, then uname -n
+# (the `hostname` binary is not installed by default on Amazon Linux 2023 minimal).
+HOSTID="$(hostname -f 2>/dev/null || hostname 2>/dev/null || uname -n)"
 
 # ---- USERS (local accounts from getent passwd) ----
 # An account is treated as active when its login shell is not a
@@ -95,6 +104,9 @@ HOSTID="$(hostname -f 2>/dev/null || hostname)"
 IDENT_JSON=""
 first=1
 while IFS=: read -r uname pw uid gid gecos home shell; do
+    # skip malformed lines with a non-numeric UID (would break the -lt test
+    # and, under set -e, abort the whole scan)
+    case "$uid" in ''|*[!0-9]*) continue ;; esac
     [ "$uid" -lt "$MIN_UID" ] && continue
     active=true
     case "$shell" in
@@ -180,7 +192,32 @@ if [ "$RC" -ne 0 ]; then
     exit 1
 fi
 
-# move captured remote JSON to the broker output path
-cat "$TMP_OUT" > "$OUTPUT_PATH"
+# ---- validate the captured output before writing it out ----
+# The remote block emits its JSON only as its final action, so a non-empty
+# object starting with '{' means the scan ran to completion.
+if [ ! -s "$TMP_OUT" ]; then
+    ERRMSG="Remote scan returned no output (stderr: $(cat "$TMP_ERR"))"
+    echo "Scan failed: $ERRMSG" >&2
+    write_error "$ERRMSG"
+    exit 1
+fi
+case "$(head -c 1 "$TMP_OUT" 2>/dev/null)" in
+    '{') : ;;
+    *)
+        ERRMSG="Remote scan produced non-JSON output"
+        echo "Scan failed: $ERRMSG" >&2
+        write_error "$ERRMSG"
+        exit 1
+        ;;
+esac
+
+# ---- write the JSON to the broker output path -------------
+# Explicit write check: if the broker path is unwritable (perms/disk), fail
+# loudly rather than exiting 0 with no/partial output.
+if ! cat "$TMP_OUT" > "$OUTPUT_PATH"; then
+    echo "ERROR: failed to write scan output to $OUTPUT_PATH" >&2
+    exit 1
+fi
+
 echo "Linux VM broker scan completed successfully."
 exit 0
