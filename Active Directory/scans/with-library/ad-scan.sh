@@ -84,8 +84,8 @@ OUTPUT_PATH="$BROKER_INJECTED_SCAN_OUTPUT_PATH"
 mkdir -p "$(dirname "$OUTPUT_PATH")" \
   || { printf 'ERROR: cannot create output directory for %s\n' "$OUTPUT_PATH" >&2; exit 1; }
 
-# Locate the shared AD helper library. v2/ecr/Dockerfile bakes it into the
-# Bridge image; AD_COMMON_LIB overrides the path for local testing.
+# Locate the shared AD helper library. The Bridge image build bakes it in;
+# AD_COMMON_LIB overrides the path for local testing.
 AD_COMMON_LIB="${AD_COMMON_LIB:-/opt/britive-broker/lib/ad_common.sh}"
 if [ ! -r "$AD_COMMON_LIB" ]; then
   printf 'ERROR: AD helper library not readable at %s\n' "$AD_COMMON_LIB" >&2

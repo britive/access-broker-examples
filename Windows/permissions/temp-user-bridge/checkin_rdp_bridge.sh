@@ -62,7 +62,7 @@ command -v python3 >/dev/null 2>&1 || fail "python3 not found"
 case "$PROVISION_TRANSPORT" in
     winrm)
         [ -n "$PROVISION_PASSWORD" ] || fail "PROVISION_PASSWORD required for winrm transport"
-        python3 -c "import winrm" 2>/dev/null || fail "pywinrm not installed — run: pip install pywinrm"
+        python3 -c "import winrm" 2>/dev/null || fail "pywinrm not installed â run: pip install pywinrm"
         ;;
     ssh)
         command -v ssh >/dev/null 2>&1 || fail "ssh not found"

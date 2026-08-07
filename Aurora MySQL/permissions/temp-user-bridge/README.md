@@ -31,13 +31,13 @@ immediately terminates any active session.
 The checkout returns everything needed for a native connection:
 
 ```
-mysql -h <native-host> -P 3306 -u '<email>%<aurora-endpoint>' -p <db-name>
+mysql -h <bridge-host> -P 3306 -u '<email>%<aurora-endpoint>' -p <db-name>
 ```
 
-- **Host / port** — `native_host:NATIVE_PORT`, the Bridge's native MySQL
-  listener, not the database. `native_host` defaults to the web host
-  (`BRIDGE_URL`); set `NATIVE_HOST` when web (ALB) and native (NLB) endpoints
-  differ.
+- **Host / port** — `BRIDGE_URL:NATIVE_PORT`, the Bridge's native MySQL
+  listener, not the database. One NLB fronts both the web tier and every native
+  listener, so the browser session and the native mysql client use the same
+  host.
 - **Username** — `<email>%<target-host>` where `<email>` is the user's Britive
   identity (`user`). The Bridge matches this against the checkout's owner to
   route the session — it must equal the checkout owner / SSO identity, **not**
@@ -62,7 +62,7 @@ username format, and password.
 | `dburl` | RDS / Aurora endpoint hostname |
 | `secret` | AWS Secrets Manager secret ID holding admin `{username, password}` |
 | `TRX` | Britive transaction ID for this checkout |
-| `BRIDGE_URL` | Bridge web hostname (browser sessions), e.g. `bridge.example.com` — **checkout only** |
+| `BRIDGE_URL` | Bridge hostname — one NLB serves both browser and native sessions, e.g. `bridge.example.com` — **checkout only** |
 | `EXPIRATION` | Session duration in seconds — **checkout only** |
 | `BRIDGE_AUTH_PASSWORD` | Bridge password from the profile; broker-injected. Typed at the mysql password prompt. The native login username is the user's email (`user`), not a separate bridge username |
 
@@ -70,7 +70,6 @@ username format, and password.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NATIVE_HOST` | `BRIDGE_URL` host | Hostname native mysql clients connect to, when it differs from the web host (web on ALB, native listeners on NLB) |
 | `DB_NAME` | `systemdb` | Database the `GRANT ALL` applies to |
 | `DB_PORT` | `3306` | MySQL port on the Aurora endpoint |
 | `NATIVE_PORT` | `3306` | Port of the Bridge's native MySQL listener |
@@ -101,7 +100,6 @@ username format, and password.
    ```json
    {
      "BRIDGE_URL": "bridge.example.com",
-     "native_host": "bridge.example.com",
      "command": "mysql -h bridge.example.com -P 3306 -u 'alice@corp%mydb.cluster-abc.us-west-2.rds.amazonaws.com' -p systemdb",
      "auth_method": "password",
      "bridge_username": "alice@corp%mydb.cluster-abc.us-west-2.rds.amazonaws.com",

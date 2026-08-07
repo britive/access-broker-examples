@@ -3,8 +3,8 @@
 # build-standalone.sh — inline lib/ad_common.sh into each permission script
 # ==============================================================================
 # The permission scripts source the shared library from the broker filesystem
-# (/opt/britive-broker/lib/ad_common.sh, installed by v2/ecr/Dockerfile). That is
-# the right arrangement for THIS deployment, where we control the image.
+# (/opt/britive-broker/lib/ad_common.sh, installed by the Bridge image build).
+# That is the right arrangement for THIS deployment, where we control the image.
 #
 # Use this generator when you cannot: a broker whose image you do not build, a
 # tenant where the scripts are pasted into the Britive console by hand, or a

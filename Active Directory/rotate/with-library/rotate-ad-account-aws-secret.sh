@@ -57,12 +57,12 @@
 
 set -euo pipefail
 
-# Locate the shared AD helper library. v2/ecr/Dockerfile bakes it into the
-# Bridge image; AD_COMMON_LIB overrides the path for local testing.
+# Locate the shared AD helper library. The Bridge image build bakes it in;
+# AD_COMMON_LIB overrides the path for local testing.
 AD_COMMON_LIB="${AD_COMMON_LIB:-/opt/britive-broker/lib/ad_common.sh}"
 if [ ! -r "$AD_COMMON_LIB" ]; then
   printf 'ERROR: AD helper library not readable at %s\n' "$AD_COMMON_LIB" >&2
-  printf 'ERROR: rebuild the Bridge image (v2/ecr/Dockerfile installs lib/ad_common.sh) or set AD_COMMON_LIB.\n' >&2
+  printf 'ERROR: rebuild the Bridge image with lib/ad_common.sh installed, or set AD_COMMON_LIB.\n' >&2
   exit 1
 fi
 # shellcheck source-path=SCRIPTDIR

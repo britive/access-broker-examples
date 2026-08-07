@@ -33,17 +33,17 @@ then the one-time key and sudoers entry are removed from the target.
 The checkout returns everything needed:
 
 ```
-ssh -p 2222 -l '<email>%<target-host>' <native-host>
+ssh -p 2222 -l '<email>%<target-host>' <bridge-host>
 ```
 
 The username is passed with `-l` (not `user@host`) because it contains both
 `@` (the email) and `%` (the target separator) — embedding it before the host
 would be ambiguous to the ssh client.
 
-- **Host / port** — `native_host:NATIVE_PORT`, the Bridge's native SSH listener
+- **Host / port** — `BRIDGE_URL:NATIVE_PORT`, the Bridge's native SSH listener
   (`2222` by default — the port the ECS deployment's NLB exposes for SSH), not
-  the target. `native_host` defaults to the web host (`BRIDGE_URL`); set
-  `NATIVE_HOST` when web (ALB) and native (NLB) endpoints differ.
+  the target. One NLB fronts both the web tier and every native listener, so the
+  browser session and the native ssh client use the **same host**.
 - **Username** — `<email>%<target-host>` where `<email>` is the user's Britive
   identity (`BRITIVE_USER_EMAIL`). The Bridge matches this against the
   checkout's owner to route the session — it must equal the checkout owner /
@@ -70,7 +70,7 @@ would be ambiguous to the ssh client.
 | `BRITIVE_USER_EMAIL` | Requesting user's email — local part becomes the Linux username |
 | `TRX` | Britive transaction ID for this checkout |
 | `TARGET_HOST` | Hostname or IP of the SSH target |
-| `BRIDGE_URL` | Bridge web hostname (browser sessions), e.g. `bridge.example.com` — **checkout only** |
+| `BRIDGE_URL` | Bridge hostname — one NLB serves both browser and native sessions, e.g. `bridge.example.com` — **checkout only** |
 | `EXPIRATION` | Session duration in seconds — **checkout only** |
 | `BRIDGE_AUTH_PASSWORD` | Bridge password from the profile; broker-injected. **Always required** — the Bridge rejects a `bridge_credentials` checkout without it. The native login username is the user's email (`BRITIVE_USER_EMAIL`), not a separate bridge username |
 
@@ -79,7 +79,6 @@ would be ambiguous to the ssh client.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRIDGE_AUTH_PUBKEY` | — | User's SSH **public** key from the profile Bridge SSH Key. When set, added as `user_public_key` so the user may authenticate with their own private key in addition to the password |
-| `NATIVE_HOST` | `BRIDGE_URL` host | Hostname native ssh clients connect to, when it differs from the web host (web on ALB, native listeners on NLB) |
 | `TARGET_PORT` | `22` | SSH port on the target |
 | `NATIVE_PORT` | `2222` | Port of the Bridge's native SSH listener |
 | `BRITIVE_SUDO` | `0` | `1` grants the temp user passwordless sudo |
@@ -113,7 +112,6 @@ would be ambiguous to the ssh client.
    ```json
    {
      "BRIDGE_URL": "bridge.example.com",
-     "native_host": "bridge.example.com",
      "command": "ssh -p 2222 -l 'alice@corp%server.internal' bridge.example.com",
      "auth_method": "password",
      "bridge_username": "alice@corp%server.internal",
