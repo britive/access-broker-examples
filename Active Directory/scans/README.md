@@ -8,7 +8,7 @@ Scans Active Directory for users, groups, and group memberships and outputs JSON
 |---|---|---|---|
 | `ad-scan.ps1` | Windows broker | RSAT `ActiveDirectory` module | `Get-ADGroupMember` **per group** |
 | `ad-scan_2.ps1` | Windows broker | RSAT `ActiveDirectory` module | bulk group `Member` property |
-| `ad-scan.sh` | **Linux broker** | `ldapsearch` (LDAP) | inverted from each user's `memberOf` |
+| `ad-scan.sh` | **Linux broker** | `ldapsearch` (LDAPS) | inverted from each user's `memberOf` |
 
 All three produce the same `data`/`metadata` schema with `resource_type = ActiveDirectory`, `id` = `SamAccountName`, and `attribute_resolution.group_membership = "id"`.
 
@@ -37,41 +37,72 @@ Both run on a **Windows broker** with the RSAT `ActiveDirectory` module. They di
 
 ### Shell (Linux broker) — `ad-scan.sh`
 
-For brokers that run on Linux (no RSAT). Queries a Domain Controller over **LDAP with `ldapsearch`**; an embedded `python3` (stdlib only) parses the LDIF and assembles the JSON. Combines the strengths of both PowerShell variants:
+For brokers that run on Linux (no RSAT). Binds to a Domain Controller over
+**LDAPS with `ldapsearch`**; an embedded `python3` (stdlib only) parses the LDIF
+and assembles the JSON. Combines the strengths of both PowerShell variants:
 
 - **No large-group truncation** — membership is inverted from each **user's `memberOf`**, so it never hits the group-side ~5000 `MaxValRange` limit (a user is rarely in >1500 groups). Users' primary group (e.g. `Domain Users`) is excluded — the same as both PowerShell variants.
 - **CNF skip + name sanitization** — replication-conflict groups are skipped; group names are stripped of newlines/tabs and truncated to 255.
 - **Paged results** (default 1000/page) so directories with more than 1000 users or groups are fully enumerated.
 - **Group `id` = `sAMAccountName`** (unique per domain), avoiding the display-name collision risk of the PowerShell variants.
 
+The file is **self-contained** — one script, nothing to install alongside it. A
+library-based variant that shares the LDAP plumbing with the rotation scripts
+produces identical output; see [`with-library/`](with-library/) and
+[`../lib/README.md`](../lib/README.md).
+
+#### LDAPS, always
+
+Earlier revisions defaulted to plain LDAP on port 389 with a simple bind. A DC
+configured to require LDAP signing — the default on a hardened domain — rejects
+that outright with `Strong(er) authentication required (8)`, so the scan could
+never bind, and it sent the bind password in cleartext on the way. LDAPS is now
+the only supported transport and a non-`ldaps://` URI fails up front.
+
+#### Resource Attributes
+
+A scan runs against a resource, and the broker injects that resource's attributes
+upper-cased with a `RESOURCE_` prefix. Setting the `AD_*` name directly overrides
+the attribute, so the script stays runnable by hand for testing.
+
+| Attribute | Arrives as | Used as | Required | Description |
+|---|---|---|---|---|
+| `HOST` | `RESOURCE_HOST` | `AD_HOST` | Yes | Domain Controller FQDN |
+| `SECRET` | `RESOURCE_SECRET` | `AD_SECRET` | Yes* | Secrets Manager id holding `{bind_dn\|username, password}` |
+| `REGION` | `RESOURCE_REGION` | `AWS_REGION` | No | Secrets Manager region (default `us-west-2`) |
+| `CA_CERT` | `RESOURCE_CA_CERT` | `AD_CA_CERT` | No | LDAPS trust bundle (default: system bundle) |
+| `BASE_DN` | `RESOURCE_BASE_DN` | `AD_BASE_DN` | No | Search base; discovered from RootDSE when empty |
+| `USER_OU` | `RESOURCE_USER_OU` | `AD_USER_OU` | No | Accepted but **not** used to scope the scan |
+
+\* `RESOURCE_USER` and `RESOURCE_PASSWORD` are still honoured as a legacy bind
+path when `SECRET` is absent. Prefer the secret: it keeps the bind password out
+of the resource definition.
+
 #### Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `BROKER_INJECTED_SCAN_OUTPUT_PATH` | Yes | — | Full path where the scan JSON is written. Injected by the broker. |
-| `RESOURCE_HOST` | Yes | — | Domain Controller hostname / IP. |
-| `RESOURCE_USER` | Yes | — | Bind user (UPN `user@domain` or `DOMAIN\user`). |
-| `RESOURCE_PASSWORD` | Yes | — | Bind password (passed to `ldapsearch` via a `0600` file, never on the command line). |
-| `RESOURCE_BASE_DN` | No | RootDSE `defaultNamingContext` | Search base; auto-discovered from the DC if omitted. |
-| `LDAP_PROTOCOL` | No | `ldap` | `ldap` or `ldaps`. |
-| `LDAP_PORT` | No | `389` / `636` | Port (defaults by protocol). |
-| `LDAP_START_TLS` | No | `0` | `1` to issue StartTLS on a plain `ldap` connection. |
-| `PAGE_SIZE` | No | `1000` | LDAP paged-results page size. |
+| `AD_PORT` | No | `636` | LDAPS port |
+| `AD_TLS_REQCERT` | No | `demand` | `demand` / `allow` / `never`. `never` is test-only |
+| `AD_TIMEOUT` | No | `15` | LDAP network/search timeout, seconds |
+| `AD_PAGE_SIZE` | No | `1000` | Paged-results page size |
 
 #### How It Works
 
-1. Fail-fast validation: output path, `ldapsearch`/`python3` present, `RESOURCE_HOST`/`RESOURCE_USER`/`RESOURCE_PASSWORD` set.
-2. Auto-discovers the base DN from RootDSE (`defaultNamingContext`) unless `RESOURCE_BASE_DN` is given — this first query also serves as the bind/connectivity test.
-3. Queries **users** (`(&(objectCategory=person)(objectClass=user))`) for `sAMAccountName`, `mail`, `givenName`, `sn`, `userPrincipalName`, `userAccountControl`, `memberOf`.
-4. Queries **groups** (`(objectClass=group)`) for `sAMAccountName`, `cn`, `name`.
-5. Builds identities (`is_active` from the `userAccountControl` `ACCOUNTDISABLE` bit; non-null `email` = `mail` or `<sam>@<domain>`), inverts `memberOf` into per-group member lists, and enumerates all groups (empty ones included).
-6. Validates the assembled output is non-empty JSON, then writes it; verifies the write succeeds.
-7. On any failure — bind/connect, query, parse, or write — writes a valid error JSON with the message so the broker reports it back.
+1. Fail-fast validation: output path, required commands present, `AD_HOST` set.
+2. Reads the bind credential from Secrets Manager into a `0600` file passed with `ldapsearch -y` — never on the command line.
+3. Binds over LDAPS and discovers the base DN from RootDSE (`defaultNamingContext`) unless `AD_BASE_DN` is given; this first query doubles as the bind/connectivity test.
+4. Queries **users** (`(&(objectCategory=person)(objectClass=user))`) for `sAMAccountName`, `mail`, `givenName`, `sn`, `userPrincipalName`, `userAccountControl`, `memberOf`.
+5. Queries **groups** (`(objectClass=group)`) for `sAMAccountName`, `cn`, `name`.
+6. Builds identities (`is_active` from the `userAccountControl` `ACCOUNTDISABLE` bit; non-null `email` = `mail` or `<sam>@<domain>`), inverts `memberOf` into per-group member lists, and enumerates all groups (empty ones included).
+7. Validates the assembled output is non-empty JSON, writes it, and verifies the write succeeded.
+8. On any failure — bind/connect, query, parse, or write — writes a valid error JSON with the message so the broker reports it back.
 
 #### Prerequisites
 
-- **Broker host (Linux):** `sh`, `ldapsearch` (openldap-clients), `python3`, `sed`, `mktemp`; network reachability to the DC (LDAP 389 / LDAPS 636).
-- **Directory:** the bind account able to read user and group objects. Plain `ldap` sends the bind password in cleartext — prefer `ldaps` or `LDAP_START_TLS=1` in production.
+- **Broker host (Linux):** `ldapsearch` (openldap-clients), `python3`, `openssl`, `mktemp`, plus `aws` and `jq` when `AD_SECRET` is used. All ship in the `britive/bridge` image. Network reachability to the DC on LDAPS 636.
+- **Directory:** the bind account able to read user and group objects.
 
 ---
 

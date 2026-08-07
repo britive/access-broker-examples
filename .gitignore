@@ -1465,3 +1465,7 @@ fabric.properties
 
 .python-version
 uv.lock
+
+# The template above ignores every lib/ directory. This one holds the shared
+# Active Directory broker-script helpers and must be tracked.
+!Active Directory/lib/

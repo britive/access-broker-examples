@@ -148,6 +148,19 @@ Are set by Britive at time of the profile checkout
 
 ---
 
+### 📁 [`temp-user-bridge/`](./temp-user-bridge/)
+
+**Purpose**: Temporary local Windows user with RDP access **proxied and recorded through the Britive Bridge (v2)**. The user connects a native RDP client (or browser) to the Bridge with a per-checkout Bridge password; the Windows account password never leaves the broker.
+
+**Scripts**:
+
+- `checkout_rdp_bridge.sh` - Creates the temp user (WinRM or SSH transport) and registers an `rdp` checkout with the Bridge; returns JSON connection details
+- `checkin_rdp_bridge.sh` - Terminates the Bridge session, then removes the temp user
+
+**Use Case**: JIT RDP access with full session recording, live monitoring, and no credential exposure to the end user. See the folder README for Bridge configuration requirements.
+
+---
+
 ## Common Patterns and Best Practices
 
 ### Environment Variable Usage

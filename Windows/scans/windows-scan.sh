@@ -6,7 +6,7 @@ set -eu
 # ============================================================
 # Shell version of windows_scan_provision.ps1. Instead of PowerShell
 # remoting from a Windows broker, this runs on the Linux broker and
-# reaches the Windows target the same way the temp-rdp-bridge scripts
+# reaches the Windows target the same way the temp-user-bridge scripts
 # do — WinRM (python3 + pywinrm) or SSH (powershell.exe -EncodedCommand).
 #
 # A PowerShell block runs ON the target, enumerates local users and

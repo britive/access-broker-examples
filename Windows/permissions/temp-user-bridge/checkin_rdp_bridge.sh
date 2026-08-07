@@ -1,28 +1,43 @@
-#!/bin/sh
-# Checkin: terminate Bridge RDP session, then delete the temp Windows user.
-# Bridge session is terminated FIRST so the RDP proxy tunnel closes before
-# the Windows account is removed.
+#!/bin/bash
 #
-# Required env vars: BRITIVE_USER_EMAIL, TRX, TARGET_HOST
-# Optional: PROVISION_HOST, PROVISION_TRANSPORT(winrm|ssh), PROVISION_USER(Administrator),
-#   PROVISION_PASSWORD, PROVISION_PORT, PROVISION_KEY(/home/bridge/.ssh/id_ed25519),
-#   PROVISION_KEY_PEM, WINRM_NO_SSL(1), LOCAL_GROUP(Remote Desktop Users), BROKER_API
+# Britive checkin script: Bridge (v2) session teardown + temp Windows user removal
+#
+# Deletes the Bridge checkout FIRST so the RDP proxy session closes before
+# the Windows account is removed, then deprovisions the temp local user
+# (group memberships and account) via WinRM or SSH.
+#
+# Required env vars (set by Britive Resource Type / Profile):
+#   BRITIVE_USER_EMAIL - requesting user's email (must match checkout)
+#   TRX                - Britive transaction ID (matches the checkout TRX)
+#   TARGET_HOST        - Windows RDP target host
+#
+# Optional env vars (with defaults):
+#   LOCAL_GROUP         - comma-separated local groups (default: Remote Desktop Users)
+#   PROVISION_TRANSPORT - winrm (default) or ssh
+#   PROVISION_HOST      - provisioning host (default: TARGET_HOST)
+#   PROVISION_USER      - privileged account (default: Administrator)
+#   PROVISION_PASSWORD  - required for winrm transport
+#   PROVISION_PORT      - default 5985/5986 (winrm) or 22 (ssh)
+#   PROVISION_KEY       - path to SSH provisioning key (default: /home/bridge/.ssh/id_ed25519)
+#   PROVISION_KEY_PEM   - inline PEM content of the provisioning key
+#   WINRM_NO_SSL        - 1 for HTTP/5985 (default: 1), 0 for HTTPS/5986
+#   BROKER_API          - path to broker-bridge-api.sh
+#                         (default: /opt/britive-broker/scripts/broker-bridge-api.sh)
 
-set -eu
+set -u
 
-# --- Variables ---
 USER_EMAIL="${BRITIVE_USER_EMAIL:-}"
 TRANSACTION_ID="${TRX:-}"
 TARGET_HOST="${TARGET_HOST:-}"
-PROVISION_HOST="${PROVISION_HOST:-${TARGET_HOST}}"
+LOCAL_GROUP="${LOCAL_GROUP:-Remote Desktop Users}"
 PROVISION_TRANSPORT="${PROVISION_TRANSPORT:-winrm}"
+PROVISION_HOST="${PROVISION_HOST:-${TARGET_HOST}}"
 PROVISION_USER="${PROVISION_USER:-Administrator}"
 PROVISION_PASSWORD="${PROVISION_PASSWORD:-}"
 PROVISION_KEY="${PROVISION_KEY:-/home/bridge/.ssh/id_ed25519}"
 PROVISION_KEY_PEM="${PROVISION_KEY_PEM:-}"
 WINRM_NO_SSL="${WINRM_NO_SSL:-1}"
-LOCAL_GROUP="${LOCAL_GROUP:-Remote Desktop Users}"
-BROKER_API="${BROKER_API:-/opt/britive-broker/scripts/bridge.sh}"
+BROKER_API="${BROKER_API:-/opt/britive-broker/scripts/broker-bridge-api.sh}"
 
 if [ "$PROVISION_TRANSPORT" = "winrm" ]; then
     if [ "$WINRM_NO_SSL" = "1" ]; then
@@ -47,7 +62,7 @@ command -v python3 >/dev/null 2>&1 || fail "python3 not found"
 case "$PROVISION_TRANSPORT" in
     winrm)
         [ -n "$PROVISION_PASSWORD" ] || fail "PROVISION_PASSWORD required for winrm transport"
-        python3 -c "import winrm" 2>/dev/null || fail "pywinrm not installed — run: pip install pywinrm"
+        python3 -c "import winrm" 2>/dev/null || fail "pywinrm not installed â run: pip install pywinrm"
         ;;
     ssh)
         command -v ssh >/dev/null 2>&1 || fail "ssh not found"
@@ -81,8 +96,10 @@ if [ "$PROVISION_TRANSPORT" = "ssh" ] && [ -n "$PROVISION_KEY_PEM" ]; then
     PROVISION_KEY="$KEY_FILE"
 fi
 
-# --- Terminate Bridge session first ---
-"${BROKER_API}" checkout-delete "${TRANSACTION_ID}"
+rc=0
+
+# --- Terminate the Bridge session first ---
+"${BROKER_API}" checkout-delete "${TRANSACTION_ID}" || rc=1
 echo "[checkin] Bridge session terminated" >&2
 
 # --- PowerShell deprovision script (best-effort after session revoked) ---
@@ -126,7 +143,7 @@ case "$PROVISION_TRANSPORT" in
         PROVISION_PORT="$PROVISION_PORT" \
         WINRM_SCHEME="$WINRM_SCHEME" \
         PS_FILE="$PS_FILE" \
-        python3 - <<'PYEOF'
+        python3 - <<'PYEOF' || rc=1
 import os, sys
 
 try:
@@ -181,8 +198,9 @@ PYEOF
             -o BatchMode=yes \
             -p "$PROVISION_PORT" \
             "${PROVISION_USER}@${PROVISION_HOST}" \
-            "powershell.exe -NonInteractive -EncodedCommand ${ENCODED}" >/dev/null
+            "powershell.exe -NonInteractive -EncodedCommand ${ENCODED}" >/dev/null || rc=1
         ;;
 esac
 
 echo "[checkin] user removed" >&2
+exit "$rc"
