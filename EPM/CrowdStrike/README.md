@@ -34,6 +34,11 @@ Every script takes exactly one parameter:
 
 Windows accepts either a bare SAM name (`jdoe`) or a qualified one (`CONTOSO\jdoe`). Unqualified names resolve as a local account first, then against the machine's AD domain. macOS expects the local short name.
 
+> [!WARNING]
+> **A UPN will not resolve.** Britive passes the value of the attribute you choose for **Account Mapping**, and that is commonly the UPN (`jdoe@contoso.com`). These scripts do not accept that form. On a domain-joined Windows machine the resolver produces `contoso.com\jdoe@contoso.com`, which fails with `ERROR: Could not resolve account`; on macOS `id jdoe@contoso.com` fails outright.
+>
+> Map to an attribute holding the **sAMAccountName** or local short name, or adapt the resolver in `elevate.ps1` and `de-elevate.ps1` to strip the UPN suffix.
+
 All four scripts exit `1` with an `ERROR:` line if the parameter is missing — RTR is non-interactive and will not prompt.
 
 ## What the Windows scripts do
@@ -78,11 +83,11 @@ RTR returns whatever the script writes to stdout. All four use consistent prefix
 | `WARNING:` | Non-fatal — usually notification or session detection |
 | `ERROR:` | Fatal; the script exits non-zero |
 
-## Revocation is not automatic
+## Revocation
 
-`elevate.ps1` ends by printing a reminder that it grants standing local admin with no self-expiry. That reminder is written for someone running the script standalone from RTR.
+Under Britive, checking the profile back in runs the de-elevate script and removes the membership. That is what makes the elevation short-lived — the scripts hold no timer of their own.
 
-Under Britive, revocation is Britive's job: it calls the de-elevate script. If you run these scripts by hand for testing, nothing will remove the access for you.
+If you run these scripts by hand from RTR for testing, nothing revokes for you. Run the de-elevate script when you are finished.
 
 ## Testing standalone
 
