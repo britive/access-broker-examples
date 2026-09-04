@@ -11,19 +11,98 @@
 #     Platform:       macOS (Darwin)
 #     Requires:       RTR Admin or RTR Active Responder role with runscript permission
 #     Impact:         A notification dialog appears on the user's screen automatically.
+#
+#     STATUS CONTRACT
+#     RTR reports command delivery, not script outcome — the exit code never
+#     reaches the caller. The last line of stdout is therefore the machine
+#     -readable result:
+#
+#         BRITIVE_STATUS {"status":"success|error","action":"elevate", ...}
+#
+#     Callers must parse the LAST line matching '^BRITIVE_STATUS ' and treat a
+#     missing marker as an error (timeout, kill, or truncated output).
 # ============================================================
 
 set -e
+set -u
+set -o pipefail
+
+# ============================================================
+# Status marker plumbing
+#   Defaults are pessimistic: if the script dies anywhere without
+#   reaching an explicit outcome, the EXIT trap still emits an error.
+# ============================================================
+BRITIVE_ACTION="elevate"
+BRITIVE_STATUS="error"
+BRITIVE_CODE="UNEXPECTED"
+BRITIVE_MESSAGE="Script terminated before reaching an outcome."
+BRITIVE_USER=""
+BRITIVE_HOST=""
+BRITIVE_WARNINGS=""
+
+json_escape() {
+    printf '%s' "$1" \
+        | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+        | tr '\n\r\t' '   '
+}
+
+add_warning() {
+    local w
+    w="\"$(json_escape "$1")\""
+    if [ -z "$BRITIVE_WARNINGS" ]; then
+        BRITIVE_WARNINGS="$w"
+    else
+        BRITIVE_WARNINGS="${BRITIVE_WARNINGS},${w}"
+    fi
+}
+
+emit_status() {
+    printf 'BRITIVE_STATUS {"status":"%s","action":"%s","code":"%s","user":"%s","host":"%s","message":"%s","warnings":[%s]}\n' \
+        "$BRITIVE_STATUS" \
+        "$BRITIVE_ACTION" \
+        "$BRITIVE_CODE" \
+        "$(json_escape "$BRITIVE_USER")" \
+        "$(json_escape "$BRITIVE_HOST")" \
+        "$(json_escape "$BRITIVE_MESSAGE")" \
+        "$BRITIVE_WARNINGS"
+}
+trap emit_status EXIT
+
+fail() {
+    BRITIVE_STATUS="error"
+    BRITIVE_CODE="$1"
+    BRITIVE_MESSAGE="$2"
+    echo "ERROR: $2"
+    exit 1
+}
+
+succeed() {
+    BRITIVE_STATUS="success"
+    BRITIVE_CODE="OK"
+    BRITIVE_MESSAGE="$1"
+}
 
 # --- Configuration ---
- while [ "$#" -gt 0 ]; do
+TARGET_USER=""
+while [ "$#" -gt 0 ]; do
     case "$1" in
-      -Username) TARGET_USER="$2"; shift 2 ;;
+      -Username) TARGET_USER="${2:-}"; shift 2 ;;
       *) shift ;;
     esac
-  done
+done
 
 HOSTNAME=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+BRITIVE_HOST="$HOSTNAME"
+BRITIVE_USER="$TARGET_USER"
+
+if [ -z "$TARGET_USER" ]; then
+    echo 'Usage: runscript -CloudFile="<uploaded-name>" -CommandLine="-Username <account>"'
+    fail "MISSING_PARAM" "No -Username supplied."
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+    fail "NOT_PRIVILEGED" "Script must run as root. RTR runs as root by default."
+fi
 
 echo "Target user: ${TARGET_USER}@${HOSTNAME}"
 
@@ -31,8 +110,7 @@ echo "Target user: ${TARGET_USER}@${HOSTNAME}"
 # Step 1: Verify user exists
 # ============================================================
 if ! id "$TARGET_USER" &>/dev/null; then
-    echo "ERROR: User '$TARGET_USER' does not exist on this system."
-    exit 1
+    fail "USER_NOT_FOUND" "User '$TARGET_USER' does not exist on this system."
 fi
 
 TARGET_UID=$(id -u "$TARGET_USER")
@@ -49,9 +127,7 @@ else
     if dseditgroup -o edit -a "$TARGET_USER" -t user admin 2>/dev/null; then
         echo "SUCCESS: Added '$TARGET_USER' to the admin group."
     else
-        echo "ERROR: Failed to add '$TARGET_USER' to the admin group."
-        echo "This script must run as root (RTR runs as root by default)."
-        exit 1
+        fail "GROUP_ADD_FAILED" "Failed to add '$TARGET_USER' to the admin group."
     fi
 fi
 
@@ -62,9 +138,12 @@ VERIFY=$(dseditgroup -o checkmember -m "$TARGET_USER" admin 2>&1 || true)
 if echo "$VERIFY" | grep -q "yes"; then
     echo "VERIFIED: '$TARGET_USER' is a member of the admin group."
 else
-    echo "ERROR: Verification failed — user not found in admin group."
-    exit 1
+    fail "VERIFY_FAILED" "Verification failed — '$TARGET_USER' not found in admin group after the change."
 fi
+
+# The privilege change is now applied and verified. Everything below is
+# best-effort notification: it can add warnings but never flips the outcome.
+succeed "'$TARGET_USER' is a local Administrator on $HOSTNAME."
 
 # ============================================================
 # Step 4: Detect active GUI session
@@ -87,6 +166,7 @@ if [ "$SESSION_ACTIVE" = false ] && pgrep -u "$TARGET_USER" -x Finder &>/dev/nul
 fi
 
 if [ "$SESSION_ACTIVE" = false ]; then
+    add_warning "notify_no_session"
     echo "WARNING: No active GUI session detected for '$TARGET_USER'."
     echo "Admin group change is applied. Notification will be skipped."
     echo "The user will have admin privileges the next time they log in."
@@ -122,6 +202,7 @@ display dialog \"Administrator Access Granted\" & return & return & ¬
 " 2>/dev/null; then
     echo "SUCCESS: Notification dialog displayed and acknowledged by user."
 else
+    add_warning "notify_failed"
     echo "WARNING: osascript returned non-zero. The user may have dismissed"
     echo "         the dialog, or the session became inactive mid-run."
     echo "         Admin group change was still applied successfully."
