@@ -20,7 +20,8 @@
     Run as:      NT AUTHORITY\SYSTEM (RTR default)
     Requires:    RTR Admin or Active Responder with runscript / Execute Operations
     Impact:      Target user is added to local Administrators and receives a desktop
-                 notification and launcher. Standing membership persists until removed.
+                 notification and launcher. Under Britive EPM the membership is removed
+                 on check-in, which runs the paired de-elevate script.
 #>
 
 param(
@@ -540,9 +541,13 @@ Write-Output "Desktop files placed for the user:"
 Write-Output "  1. Run-Elevated-Installer.bat  (user double-clicks this)"
 Write-Output "  2. ElevatedInstaller.ps1       (GUI, launched by the .bat)"
 Write-Output ""
-Write-Output "Reminder: this grants STANDING local admin. There is no automatic"
-Write-Output "revocation. Remove with: Remove-LocalGroupMember -Group Administrators"
-Write-Output "-Member '$qualified'  (or run a time-boxed JIT variant instead)."
+Write-Output "Revocation: checking the Britive profile back in runs the paired"
+Write-Output "de-elevate script, which removes this membership. That is the normal"
+Write-Output "end of the elevation - it is short-lived by design."
+Write-Output ""
+Write-Output "If you ran this script directly from RTR rather than through Britive,"
+Write-Output "nothing will revoke it for you. Run the de-elevate script when done,"
+Write-Output "or: Remove-LocalGroupMember -Group Administrators -Member '$qualified'"
 Write-Output "============================================================"
 
 exit 0
