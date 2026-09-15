@@ -30,10 +30,87 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ============================================================
+# Status marker plumbing
+#   RTR reports command delivery, not script outcome - the exit code never
+#   reaches the caller. The last line of stdout is therefore the machine-
+#   readable result:
+#
+#       BRITIVE_STATUS {"status":"success|error","action":"elevate", ...}
+#
+#   Callers must parse the LAST line matching '^BRITIVE_STATUS ' and treat a
+#   missing marker as an error (timeout, kill, or truncated output).
+# ============================================================
+$script:BritiveAction   = 'elevate'
+$script:BritiveUser     = $Username
+$script:BritiveWarnings = New-Object System.Collections.ArrayList
+$script:BritiveEmitted  = $false
+
+# Widen the output buffer where a real console host is attached, so the
+# single-line marker is never wrapped. No-op under a headless RTR runspace.
+try {
+    $Host.UI.RawUI.BufferSize = New-Object System.Management.Automation.Host.Size(
+        4096, $Host.UI.RawUI.BufferSize.Height)
+}
+catch { }
+
+function ConvertTo-BritiveJsonString {
+    param([string]$Value)
+    if ([string]::IsNullOrEmpty($Value)) { return '' }
+    $s = $Value -replace "`r", ' ' -replace "`n", ' ' -replace "`t", ' '
+    $s = $s -replace '\\', '\\'
+    $s = $s -replace '"', '\"'
+    if ($s.Length -gt 300) { $s = $s.Substring(0, 297) + '...' }
+    return $s
+}
+
+function Add-BritiveWarning {
+    param([string]$Warning)
+    [void]$script:BritiveWarnings.Add($Warning)
+}
+
+function Write-BritiveStatus {
+    param(
+        [ValidateSet('success', 'error')][string]$Status,
+        [string]$Code,
+        [string]$Message
+    )
+    if ($script:BritiveEmitted) { return }
+    $script:BritiveEmitted = $true
+    $w = @($script:BritiveWarnings | ForEach-Object { '"' + (ConvertTo-BritiveJsonString $_) + '"' }) -join ','
+    $json = '{"status":"' + $Status +
+            '","action":"' + $script:BritiveAction +
+            '","code":"' + $Code +
+            '","user":"' + (ConvertTo-BritiveJsonString $script:BritiveUser) +
+            '","host":"' + (ConvertTo-BritiveJsonString $env:COMPUTERNAME) +
+            '","message":"' + (ConvertTo-BritiveJsonString $Message) +
+            '","warnings":[' + $w + ']}'
+    Write-Output "BRITIVE_STATUS $json"
+}
+
+function Exit-BritiveFail {
+    param([string]$Code, [string]$Message)
+    Write-Output "ERROR: $Message"
+    Write-BritiveStatus -Status 'error' -Code $Code -Message $Message
+    exit 1
+}
+
+function Exit-BritiveSuccess {
+    param([string]$Code, [string]$Message)
+    Write-BritiveStatus -Status 'success' -Code $Code -Message $Message
+    exit 0
+}
+
+# Net for any terminating error that no local try/catch handles. Without it a
+# thrown error would end the script with no marker at all.
+trap {
+    Write-BritiveStatus -Status 'error' -Code 'UNEXPECTED' -Message "Unhandled error: $_"
+    exit 1
+}
+
 # --- Guard: parameter must be supplied (RTR is non-interactive) ---
 if ([string]::IsNullOrWhiteSpace($Username)) {
-    Write-Output 'ERROR: No -Username supplied. Invoke with: runscript -CloudFile="win-elevation-v3" -CommandLine="-Username <account>"'
-    exit 1
+    Exit-BritiveFail -Code 'MISSING_PARAM' -Message 'No -Username supplied. Invoke with: runscript -CloudFile="<uploaded-name>" -CommandLine="-Username <account>"'
 }
 
 $targetUser = $Username.Trim()
@@ -66,11 +143,11 @@ try {
     $accountSid = (New-Object System.Security.Principal.NTAccount($qualified)).Translate(
         [System.Security.Principal.SecurityIdentifier]).Value
 
+    $script:BritiveUser = $qualified
     Write-Output "Resolved target account: $qualified (SID $accountSid)"
 }
 catch {
-    Write-Output "ERROR: Could not resolve account '$targetUser'. $_"
-    exit 1
+    Exit-BritiveFail -Code 'RESOLVE_FAILED' -Message "Could not resolve account '$targetUser'. $_"
 }
 
 # --- Step 1: Add to local Administrators (idempotent, by SID) ---
@@ -87,8 +164,7 @@ try {
     }
 }
 catch {
-    Write-Output "ERROR: Failed to add '$qualified' to local Administrators. $_"
-    exit 1
+    Exit-BritiveFail -Code 'GROUP_ADD_FAILED' -Message "Failed to add '$qualified' to local Administrators. $_"
 }
 
 # --- Step 2: Verify membership ---
@@ -96,12 +172,12 @@ try {
     $verify = Get-LocalGroupMember -Group "Administrators" |
         Where-Object { $_.SID.Value -eq $accountSid }
     if (-not $verify) {
-        Write-Output "ERROR: Verification failed; account not present in Administrators."
-        exit 1
+        Exit-BritiveFail -Code 'VERIFY_FAILED' -Message "Verification failed; account not present in Administrators."
     }
     Write-Output "VERIFIED: '$qualified' is a member of local Administrators."
 }
 catch {
+    Add-BritiveWarning 'verify_failed_soft'
     Write-Output "WARNING: Could not verify membership. $_"
 }
 
@@ -114,6 +190,7 @@ try {
     }
 }
 catch {
+    Add-BritiveWarning 'profile_lookup_failed'
     Write-Output "WARNING: Could not resolve profile via Win32_UserProfile. $_"
 }
 
@@ -126,8 +203,7 @@ if (-not $desktopDir -or -not (Test-Path $desktopDir)) {
 }
 
 if (-not $desktopDir -or -not (Test-Path $desktopDir)) {
-    Write-Output "ERROR: Could not locate the desktop folder for '$qualified'. Has the user signed in at least once?"
-    exit 1
+    Exit-BritiveFail -Code 'NO_USER_PROFILE' -Message "Could not locate the desktop folder for '$qualified'. Has the user signed in at least once? NOTE: Administrators membership was already applied and is NOT rolled back; run the de-elevate script to clear it."
 }
 Write-Output "Target desktop: $desktopDir"
 
@@ -144,7 +220,10 @@ try {
         }
     }
 }
-catch { Write-Output "WARNING: quser failed. $_" }
+catch {
+    Add-BritiveWarning 'session_lookup_failed'
+    Write-Output "WARNING: quser failed. $_"
+}
 
 if (-not $sessionId) {
     try {
@@ -152,7 +231,10 @@ if (-not $sessionId) {
             Where-Object { $_.UserName -like "*\$samName" } | Select-Object -First 1
         if ($explorer) { $sessionId = $explorer.SessionId }
     }
-    catch { Write-Output "WARNING: explorer lookup failed. $_" }
+    catch {
+        Add-BritiveWarning 'session_lookup_failed'
+        Write-Output "WARNING: explorer lookup failed. $_"
+    }
 }
 
 # --- Step 5: Notify the interactive user (best effort, never fatal) ---
@@ -269,7 +351,10 @@ $form.CancelButton = $okButton
         Remove-Item $xmlPath -Force -ErrorAction SilentlyContinue
         Write-Output "  Notification dialog launched in user session."
     }
-    catch { Write-Output "  WARNING: notification dialog failed. $_" }
+    catch {
+        Add-BritiveWarning 'notify_dialog_failed'
+        Write-Output "  WARNING: notification dialog failed. $_"
+    }
 
     # Supplementary system-tray toast (non-blocking, auto-dismisses)
     try {
@@ -318,9 +403,13 @@ $n.Dispose()
         Remove-Item $xmlPath2 -Force -ErrorAction SilentlyContinue
         Write-Output "  Toast queued in user session."
     }
-    catch { Write-Output "  WARNING: toast notification failed. $_" }
+    catch {
+        Add-BritiveWarning 'notify_toast_failed'
+        Write-Output "  WARNING: toast notification failed. $_"
+    }
 }
 else {
+    Add-BritiveWarning 'notify_no_session'
     Write-Output "WARNING: No interactive session found for '$samName'; skipping user notification."
 }
 
@@ -497,8 +586,7 @@ try {
     Write-Output "GUI script written: $guiScriptPath"
 }
 catch {
-    Write-Output "ERROR: Could not write GUI script to desktop. $_"
-    exit 1
+    Exit-BritiveFail -Code 'DESKTOP_WRITE_FAILED' -Message "Could not write GUI script to desktop. $_ NOTE: Administrators membership was already applied and is NOT rolled back; run the de-elevate script to clear it."
 }
 
 # Batch launcher (double-quoted here-string: $qualified and $guiScriptPath expand).
@@ -529,8 +617,7 @@ try {
     Write-Output "Batch launcher written: $launcherPath"
 }
 catch {
-    Write-Output "ERROR: Could not write batch launcher to desktop. $_"
-    exit 1
+    Exit-BritiveFail -Code 'DESKTOP_WRITE_FAILED' -Message "Could not write batch launcher to desktop. $_ NOTE: Administrators membership was already applied and is NOT rolled back; run the de-elevate script to clear it."
 }
 
 # --- Result ---
@@ -550,4 +637,4 @@ Write-Output "nothing will revoke it for you. Run the de-elevate script when don
 Write-Output "or: Remove-LocalGroupMember -Group Administrators -Member '$qualified'"
 Write-Output "============================================================"
 
-exit 0
+Exit-BritiveSuccess -Code 'OK' -Message "'$qualified' is a local Administrator on $env:COMPUTERNAME; elevation launcher placed on the desktop."
