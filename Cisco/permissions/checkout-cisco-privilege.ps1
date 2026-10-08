@@ -23,10 +23,33 @@
 #   CISCO_PASSWORD_LENGTH     – Length of the generated password (default: 20)
 #   CISCO_ENABLE_SECRET       – Enable mode secret (only needed if
 #                               the admin account is not privilege 15)
+#   CISCO_ACCEPT_HOST_KEY     – "true" to accept unknown host keys on first
+#                               connect (lab use only; default: false — the
+#                               host key must already be trusted via
+#                               New-SSHTrustedHost)
 #   CISCO_ESCALATED_PRIVILEGE – Privilege level to grant (default: 15)
+#   CISCO_JIT_PREFIX          – Prefix applied to the derived local username
+#                               so JIT accounts never collide with standing
+#                               accounts (default: "brt-"; set to "" to
+#                               disable, in which case checkout refuses to
+#                               touch an account that already exists)
 # ============================================================
 
 $ErrorActionPreference = 'Stop'
+
+# ─── Helper: check whether a local username exists in the running config ─────
+
+function Test-CiscoLocalUser {
+    param ($Stream, [string]$Username)
+    # 'terminal length 0' disables paging so the show output arrives in one piece.
+    $Stream.WriteLine("terminal length 0")
+    $Stream.Expect('#', [TimeSpan]::FromSeconds(5)) | Out-Null
+    $Stream.WriteLine("show running-config | include ^username $Username ")
+    $out = $Stream.Expect('#', [TimeSpan]::FromSeconds(10))
+    if (-not $out) { throw "Timed out checking whether '$Username' exists." }
+    # Match a real config line, not the echoed command (which carries the '^').
+    return [bool]($out -match "(?m)^username $([regex]::Escape($Username)) ")
+}
 
 # ─── Helper: open SSH shell, create/escalate user, save config ───────────────
 
@@ -38,7 +61,8 @@ function Invoke-CiscoPrivilegeCheckout {
         [string]$TargetUser,
         [SecureString]$TargetPassword,
         [string]$EnableSecret,
-        [int]$EscalatedPrivilege
+        [int]$EscalatedPrivilege,
+        [string]$JitPrefix
     )
 
     $sshSession = $null
@@ -48,11 +72,21 @@ function Invoke-CiscoPrivilegeCheckout {
 
         $Credential = New-Object System.Management.Automation.PSCredential($AdminUser, $AdminPassword)
 
+        # ── Host-key policy ─────────────────────────────────────────────────
+        # Default: the switch host key must already be trusted by Posh-SSH
+        # (New-SSHTrustedHost / Get-SSHTrustedHost). Set
+        # CISCO_ACCEPT_HOST_KEY=true to accept unknown keys on first connect
+        # (lab use only).
+        $hostKeyArgs = @{}
+        if ($env:CISCO_ACCEPT_HOST_KEY -and $env:CISCO_ACCEPT_HOST_KEY.ToLower() -eq 'true') {
+            $hostKeyArgs['AcceptKey'] = $true
+            $hostKeyArgs['Force']     = $true
+        }
+
         $sshSession = New-SSHSession `
             -ComputerName $SwitchHost `
             -Credential $Credential `
-            -AcceptKey `
-            -Force `
+            @hostKeyArgs `
             -ErrorAction Stop
 
         Write-Host "  SSH session established (SessionId: $($sshSession.SessionId))."
@@ -69,10 +103,10 @@ function Invoke-CiscoPrivilegeCheckout {
         while ([DateTime]::UtcNow -lt $deadline) {
             $chunk = $stream.Read()
             if ($chunk) { $output += $chunk }
-            if ($output -match '[>#]') { break }
+            if ($output -match '[>#]\s*$') { break }
             Start-Sleep -Milliseconds 300
         }
-        if (-not ($output -match '[>#]')) {
+        if (-not ($output -match '[>#]\s*$')) {
             throw "Timed out waiting for initial shell prompt on $SwitchHost."
         }
 
@@ -101,6 +135,17 @@ function Invoke-CiscoPrivilegeCheckout {
             Write-Host "  Privileged EXEC mode entered."
         }
 
+        # ── Pre-flight: does the account already exist? ─────────────────────
+        # With a prefix, an existing account can only be a leftover from a
+        # failed checkin, so it is refreshed in place. Without a prefix we
+        # refuse to touch a standing account, because checkin would delete it.
+        if (Test-CiscoLocalUser -Stream $stream -Username $TargetUser) {
+            if (-not $JitPrefix) {
+                throw "Local account '$TargetUser' already exists on $SwitchHost and CISCO_JIT_PREFIX is empty. Refusing to overwrite a standing account."
+            }
+            Write-Warning "  '$TargetUser' already exists on $SwitchHost (leftover from an earlier checkout). Refreshing it in place."
+        }
+
         # ── Enter global configuration mode ─────────────────────────────────
         Write-Host "  Entering global configuration mode..."
         $stream.WriteLine("configure terminal")
@@ -126,6 +171,11 @@ function Invoke-CiscoPrivilegeCheckout {
         $endOutput = $stream.Expect('#', [TimeSpan]::FromSeconds(5))
         if (-not $endOutput) {
             throw "Timed out waiting for privileged EXEC prompt after 'end' on $SwitchHost."
+        }
+
+        # ── Verify the account is present before saving ─────────────────────
+        if (-not (Test-CiscoLocalUser -Stream $stream -Username $TargetUser)) {
+            throw "'$TargetUser' is not present in the running configuration after the username command. Not saving."
         }
 
         # ── Persist to NVRAM ─────────────────────────────────────────────────
@@ -168,6 +218,10 @@ try {
     $TargetIdentity     = $env:CISCO_TARGET_USER
     $TargetUser         = ($env:CISCO_TARGET_USER -split '@')[0]
     if (-not $TargetUser) { throw "CISCO_TARGET_USER resolved to an empty username after stripping the domain." }
+    # Prefix the JIT account (default "brt-") so it can never collide with, or
+    # be deleted in place of, a standing local account such as "admin".
+    $JitPrefix          = if ($null -ne $env:CISCO_JIT_PREFIX) { $env:CISCO_JIT_PREFIX } else { 'brt-' }
+    $TargetUser         = "$JitPrefix$TargetUser"
     $EnableSecret       = $env:CISCO_ENABLE_SECRET           # optional
     $EscalatedPrivilege = if ($env:CISCO_ESCALATED_PRIVILEGE) { [int]$env:CISCO_ESCALATED_PRIVILEGE } else { 15 }
 
@@ -211,7 +265,8 @@ try {
         -TargetUser         $TargetUser `
         -TargetPassword     $TargetPassword `
         -EnableSecret       $EnableSecret `
-        -EscalatedPrivilege $EscalatedPrivilege
+        -EscalatedPrivilege $EscalatedPrivilege `
+        -JitPrefix          $JitPrefix
 
     Write-Host "Checkout completed: user '$TargetUser' has privilege $EscalatedPrivilege on switch '$SwitchHost'."
 
@@ -219,8 +274,17 @@ try {
     if ($PasswordGenerated) {
         Write-Host "  Password was auto-generated for this checkout."
     }
-    Write-Output "CISCO_TARGET_USER=$TargetUser"
-    Write-Output "CISCO_TARGET_PASSWORD=$PlainTargetPassword"
+    # ── Emit the checkout result as JSON on stdout (the only stdout output) ──
+    # Same contract as the Bash variant: login, hostname, password,
+    # connection_string, ssh_command.
+    $result = [ordered]@{
+        login             = $TargetUser
+        hostname          = $SwitchHost
+        password          = $PlainTargetPassword
+        connection_string = "ssh://${TargetUser}:${PlainTargetPassword}@${SwitchHost}:22"
+        ssh_command       = "ssh -o PubkeyAcceptedKeyTypes=+ssh-rsa ${TargetUser}@${SwitchHost}"
+    }
+    Write-Output ($result | ConvertTo-Json -Compress)
 
     exit 0
 }

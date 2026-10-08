@@ -11,11 +11,18 @@
 #   CISCO_ADMIN_USER      – Admin username for the SSH session
 #   CISCO_ADMIN_PASSWORD  – Admin password for the SSH session
 #   CISCO_TARGET_USER     – Local username whose password to rotate
-#   CISCO_NEW_PASSWORD    – The new password to set
 #
 # Optional env vars:
+#   CISCO_NEW_PASSWORD    – The new password to set. If unset, a strong
+#                           random value is generated and returned on
+#                           stdout as JSON so the broker can store it
+#   CISCO_PASSWORD_LENGTH – Length of the generated value (default: 20)
 #   CISCO_ENABLE_SECRET   – Enable mode secret (only needed if the
 #                           admin account is not privilege 15)
+#   CISCO_ACCEPT_HOST_KEY     – "true" to accept unknown host keys on first
+#                               connect (lab use only; default: false — the
+#                               host key must already be trusted via
+#                               New-SSHTrustedHost)
 #   CISCO_PRIVILEGE_LEVEL – Privilege level for the target user
 #                           (default: 15)
 # ============================================================
@@ -42,11 +49,21 @@ function Invoke-CiscoPasswordRotation {
 
         $Credential = New-Object System.Management.Automation.PSCredential($AdminUser, $AdminPassword)
 
+        # ── Host-key policy ─────────────────────────────────────────────────
+        # Default: the switch host key must already be trusted by Posh-SSH
+        # (New-SSHTrustedHost / Get-SSHTrustedHost). Set
+        # CISCO_ACCEPT_HOST_KEY=true to accept unknown keys on first connect
+        # (lab use only).
+        $hostKeyArgs = @{}
+        if ($env:CISCO_ACCEPT_HOST_KEY -and $env:CISCO_ACCEPT_HOST_KEY.ToLower() -eq 'true') {
+            $hostKeyArgs['AcceptKey'] = $true
+            $hostKeyArgs['Force']     = $true
+        }
+
         $sshSession = New-SSHSession `
             -ComputerName $SwitchHost `
             -Credential $Credential `
-            -AcceptKey `
-            -Force `
+            @hostKeyArgs `
             -ErrorAction Stop
 
         Write-Host "  SSH session established (SessionId: $($sshSession.SessionId))."
@@ -63,10 +80,10 @@ function Invoke-CiscoPasswordRotation {
         while ([DateTime]::UtcNow -lt $deadline) {
             $chunk = $stream.Read()
             if ($chunk) { $output += $chunk }
-            if ($output -match '[>#]') { break }
+            if ($output -match '[>#]\s*$') { break }
             Start-Sleep -Milliseconds 300
         }
-        if (-not ($output -match '[>#]')) {
+        if (-not ($output -match '[>#]\s*$')) {
             throw "Timed out waiting for initial shell prompt on $SwitchHost."
         }
 
@@ -152,13 +169,27 @@ try {
     if (-not $env:CISCO_ADMIN_USER)     { throw "CISCO_ADMIN_USER environment variable is not set. Cannot authenticate to switch." }
     if (-not $env:CISCO_ADMIN_PASSWORD) { throw "CISCO_ADMIN_PASSWORD environment variable is not set. Cannot authenticate to switch." }
     if (-not $env:CISCO_TARGET_USER)    { throw "CISCO_TARGET_USER environment variable is not set. Cannot identify target account." }
-    if (-not $env:CISCO_NEW_PASSWORD)   { throw "CISCO_NEW_PASSWORD environment variable is not set. Cannot rotate password." }
 
     $SwitchHost     = $env:CISCO_SWITCH_HOST
     $AdminUser      = $env:CISCO_ADMIN_USER
     $AdminPassword  = ConvertTo-SecureString $env:CISCO_ADMIN_PASSWORD -AsPlainText -Force
     $TargetUser     = $env:CISCO_TARGET_USER
-    $NewPassword    = ConvertTo-SecureString $env:CISCO_NEW_PASSWORD   -AsPlainText -Force
+    # ── Generate the new secret if the caller did not supply one ────────────
+    # Alphanumerics only (avoids IOS CLI special-character issues). Crypto RNG.
+    # The value is returned on stdout as JSON so the broker can write it back
+    # to the Britive Secrets Store; it is never printed anywhere else.
+    if (-not $env:CISCO_NEW_PASSWORD) {
+        $PasswordLength   = if ($env:CISCO_PASSWORD_LENGTH) { [int]$env:CISCO_PASSWORD_LENGTH } else { 20 }
+        $chars            = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+        $bytes            = New-Object 'System.Byte[]' $PasswordLength
+        $rng              = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+        $rng.GetBytes($bytes)
+        $rng.Dispose()
+        $PlainNewPassword = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
+    } else {
+        $PlainNewPassword = $env:CISCO_NEW_PASSWORD
+    }
+    $NewPassword    = ConvertTo-SecureString $PlainNewPassword -AsPlainText -Force
     $EnableSecret   = $env:CISCO_ENABLE_SECRET          # optional
     $PrivilegeLevel = if ($env:CISCO_PRIVILEGE_LEVEL) { [int]$env:CISCO_PRIVILEGE_LEVEL } else { 15 }
 
@@ -186,6 +217,10 @@ try {
         -PrivilegeLevel $PrivilegeLevel
 
     Write-Host "Password rotation completed successfully for user '$TargetUser' on switch '$SwitchHost'."
+
+    # ── Emit the result as JSON on stdout (the only stdout output) ──────────
+    # The broker captures this to update the stored secret for the account.
+    Write-Output ([ordered]@{ login = $TargetUser; hostname = $SwitchHost; password = $PlainNewPassword } | ConvertTo-Json -Compress)
     exit 0
 }
 catch {

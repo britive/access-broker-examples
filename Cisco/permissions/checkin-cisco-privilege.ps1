@@ -18,9 +18,31 @@
 # Optional env vars:
 #   CISCO_ENABLE_SECRET  – Enable mode secret (only needed if
 #                          the admin account is not privilege 15)
+#   CISCO_JIT_PREFIX     – Must match the value used at checkout
+#                          (default: "brt-")
+#   CISCO_CHECKIN_RETRIES – Extra attempts if the removal fails
+#                          (default: 1)
+#   CISCO_ACCEPT_HOST_KEY     – "true" to accept unknown host keys on first
+#                               connect (lab use only; default: false — the
+#                               host key must already be trusted via
+#                               New-SSHTrustedHost)
 # ============================================================
 
 $ErrorActionPreference = 'Stop'
+
+# ─── Helper: check whether a local username exists in the running config ─────
+
+function Test-CiscoLocalUser {
+    param ($Stream, [string]$Username)
+    # 'terminal length 0' disables paging so the show output arrives in one piece.
+    $Stream.WriteLine("terminal length 0")
+    $Stream.Expect('#', [TimeSpan]::FromSeconds(5)) | Out-Null
+    $Stream.WriteLine("show running-config | include ^username $Username ")
+    $out = $Stream.Expect('#', [TimeSpan]::FromSeconds(10))
+    if (-not $out) { throw "Timed out checking whether '$Username' exists." }
+    # Match a real config line, not the echoed command (which carries the '^').
+    return [bool]($out -match "(?m)^username $([regex]::Escape($Username)) ")
+}
 
 # ─── Helper: open SSH shell, remove user, save config ────────────────────────
 
@@ -40,11 +62,21 @@ function Invoke-CiscoPrivilegeCheckin {
 
         $Credential = New-Object System.Management.Automation.PSCredential($AdminUser, $AdminPassword)
 
+        # ── Host-key policy ─────────────────────────────────────────────────
+        # Default: the switch host key must already be trusted by Posh-SSH
+        # (New-SSHTrustedHost / Get-SSHTrustedHost). Set
+        # CISCO_ACCEPT_HOST_KEY=true to accept unknown keys on first connect
+        # (lab use only).
+        $hostKeyArgs = @{}
+        if ($env:CISCO_ACCEPT_HOST_KEY -and $env:CISCO_ACCEPT_HOST_KEY.ToLower() -eq 'true') {
+            $hostKeyArgs['AcceptKey'] = $true
+            $hostKeyArgs['Force']     = $true
+        }
+
         $sshSession = New-SSHSession `
             -ComputerName $SwitchHost `
             -Credential $Credential `
-            -AcceptKey `
-            -Force `
+            @hostKeyArgs `
             -ErrorAction Stop
 
         Write-Host "  SSH session established (SessionId: $($sshSession.SessionId))."
@@ -61,10 +93,10 @@ function Invoke-CiscoPrivilegeCheckin {
         while ([DateTime]::UtcNow -lt $deadline) {
             $chunk = $stream.Read()
             if ($chunk) { $output += $chunk }
-            if ($output -match '[>#]') { break }
+            if ($output -match '[>#]\s*$') { break }
             Start-Sleep -Milliseconds 300
         }
-        if (-not ($output -match '[>#]')) {
+        if (-not ($output -match '[>#]\s*$')) {
             throw "Timed out waiting for initial shell prompt on $SwitchHost."
         }
 
@@ -116,6 +148,11 @@ function Invoke-CiscoPrivilegeCheckin {
             throw "Timed out waiting for privileged EXEC prompt after 'end' on $SwitchHost."
         }
 
+        # ── Verify the account is gone before saving ────────────────────────
+        if (Test-CiscoLocalUser -Stream $stream -Username $TargetUser) {
+            throw "'$TargetUser' is still present in the running configuration after 'no username'."
+        }
+
         # ── Persist to NVRAM ─────────────────────────────────────────────────
         Write-Host "  Saving configuration to NVRAM..."
         $stream.WriteLine("write memory")
@@ -155,6 +192,10 @@ try {
     # contain '@'). If no '@' is present, the value is used unchanged.
     $TargetIdentity = $env:CISCO_TARGET_USER
     $TargetUser    = ($env:CISCO_TARGET_USER -split '@')[0]
+    # Apply the same prefix the checkout script used (default "brt-").
+    $JitPrefix     = if ($null -ne $env:CISCO_JIT_PREFIX) { $env:CISCO_JIT_PREFIX } else { 'brt-' }
+    $TargetUser    = "$JitPrefix$TargetUser"
+    $Retries       = if ($env:CISCO_CHECKIN_RETRIES) { [int]$env:CISCO_CHECKIN_RETRIES } else { 1 }
     if (-not $TargetUser) { throw "CISCO_TARGET_USER resolved to an empty username after stripping the domain." }
     $EnableSecret  = $env:CISCO_ENABLE_SECRET    # optional
 
@@ -171,13 +212,30 @@ try {
     Import-Module Posh-SSH -ErrorAction Stop
     Write-Host "Posh-SSH module loaded."
 
-    # STEP 3: Connect and remove user
-    Invoke-CiscoPrivilegeCheckin `
-        -SwitchHost    $SwitchHost `
-        -AdminUser     $AdminUser `
-        -AdminPassword $AdminPassword `
-        -TargetUser    $TargetUser `
-        -EnableSecret  $EnableSecret
+    # STEP 3: Connect and remove user.
+    # A failed checkin leaves a standing privileged account behind, so retry
+    # before giving up. The sequence is idempotent: 'no username' on an
+    # account that is already gone is a no-op and verification still passes.
+    $attempt = 0
+    while ($true) {
+        try {
+            Invoke-CiscoPrivilegeCheckin `
+                -SwitchHost    $SwitchHost `
+                -AdminUser     $AdminUser `
+                -AdminPassword $AdminPassword `
+                -TargetUser    $TargetUser `
+                -EnableSecret  $EnableSecret
+            break
+        }
+        catch {
+            $attempt++
+            if ($attempt -gt $Retries) {
+                throw "$($_.Exception.Message) (after $attempt attempt(s); remove manually with 'no username $TargetUser')"
+            }
+            Write-Warning "  Checkin attempt $attempt failed: $($_.Exception.Message). Retrying in 5s..."
+            Start-Sleep -Seconds 5
+        }
+    }
 
     Write-Host "Checkin completed: user '$TargetUser' removed from switch '$SwitchHost'."
     exit 0
