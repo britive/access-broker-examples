@@ -1,0 +1,35 @@
+# Shared expect prologue for ISE rotation scripts: host-key policy, login,
+# first prompt. Sourced from the main expect script via `source`.
+set timeout 20
+log_user 0
+set host        $env(ISE_HOST)
+set admin_user  $env(ISE_CLI_ADMIN_USER)
+set admin_pass  $env(ISE_CLI_ADMIN_PASSWORD)
+set known_hosts $env(ISE_KNOWN_HOSTS)
+set accept_key  $env(ISE_ACCEPT_HOST_KEY)
+set prompt      {(^|[\r\n])[^\r\n]*[#] ?$}
+set cfg_prompt  {\(config\)# ?$}
+
+if {[string tolower $accept_key] eq "true"} {
+    set hk [list -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null]
+} elseif {$known_hosts ne ""} {
+    set hk [list -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts]
+} else {
+    set hk [list -o StrictHostKeyChecking=yes]
+}
+
+spawn ssh {*}$hk -o ConnectTimeout=10 -l $admin_user $host
+expect {
+    -nocase -re {password:} { send "$admin_pass\r" }
+    -re {Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No .* host key is known} {
+        puts stderr "  ERROR: Host key for $host is unknown or changed. Add it to ISE_KNOWN_HOSTS."
+        exit 1
+    }
+    timeout { puts stderr "  ERROR: no password prompt from $host"; exit 1 }
+    eof     { puts stderr "  ERROR: connection to $host closed"; exit 1 }
+}
+expect {
+    -re $prompt {}
+    -nocase -re {password:} { puts stderr "  ERROR: authentication failed for $admin_user"; exit 1 }
+    timeout { puts stderr "  ERROR: no shell prompt from $host"; exit 1 }
+}
